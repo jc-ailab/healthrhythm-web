@@ -337,6 +337,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         return syncHistory({
           ...next,
           strength: {
+            ...next.strength,
             completedExerciseIds: Array.from(completedExerciseIds),
             lastUpdatedAt: new Date().toISOString(),
           },
@@ -559,7 +560,7 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
 
   const legacy = rawState as LegacyAppState
   return syncHistory({
-    version: 2,
+    version: 3,
     currentDayKey: legacy.currentDayKey ?? toDayKey(now),
     selectedTab: legacy.selectedTab ?? 'rhythm',
     rhythm: legacy.rhythm,
