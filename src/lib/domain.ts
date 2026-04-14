@@ -1,10 +1,10 @@
-export type TabKey = 'rhythm' | 'breath' | 'today' | 'history' | 'strength'
+export type TabKey = 'rhythm' | 'breath' | 'today' | 'history' | 'strength' | 'library'
 
 export type RhythmStatus = 'idle' | 'running' | 'paused' | 'completed'
 export type BreathStatus = 'idle' | 'running' | 'paused' | 'completed'
 export type BreathPhase = 'inhale' | 'hold' | 'exhale' | 'endHold'
 export type BreathMode = 'fourSevenEight' | 'fourFourFourFour' | 'sixSixSixSix' | 'custom'
-export type HabitId = 'mindfulEating' | 'earlySleep'
+export type HabitId = string
 
 export interface RhythmEntry {
   id: string
@@ -75,34 +75,68 @@ export interface DayRecord {
   habits: Partial<Record<HabitId, string>>
 }
 
+export interface HabitDefinition {
+  id: HabitId
+  name: string
+  category: string
+  note: string
+  enabled: boolean
+  showOnToday: boolean
+  isBuiltIn?: boolean
+}
+
+export interface ExerciseDefinition {
+  id: string
+  name: string
+  category: string
+  description: string
+  caution: string
+  suggestedVolume: string
+  suggestedSets: string
+  estimatedTime: string
+  enabled: boolean
+  isBuiltIn?: boolean
+}
+
+export interface LibraryState {
+  habits: HabitDefinition[]
+  exercises: ExerciseDefinition[]
+}
+
 export interface AppState {
-  version: 1
+  version: 2
   currentDayKey: string
   selectedTab: TabKey
   rhythm: RhythmState
   breath: BreathState
   today: TodayState
   strength: StrengthState
+  library: LibraryState
   history: DayRecord[]
-}
-
-export interface HabitDefinition {
-  id: HabitId
-  title: string
-  detail: string
-}
-
-export interface StrengthExercise {
-  id: string
-  name: string
-  reps: string
-  caution: string
 }
 
 export interface StrengthRoutine {
   id: string
   title: string
-  exercises: StrengthExercise[]
+  exerciseIds: string[]
+}
+
+export interface ResolvedStrengthExercise {
+  id: string
+  name: string
+  category: string
+  description: string
+  caution: string
+  suggestedVolume: string
+  suggestedSets: string
+  estimatedTime: string
+  enabled: boolean
+}
+
+export interface ResolvedStrengthRoutine {
+  id: string
+  title: string
+  exercises: ResolvedStrengthExercise[]
 }
 
 export interface HistorySummary {
@@ -128,90 +162,216 @@ export const BREATH_ROUND_OPTIONS = [3, 5, 10] as const
 export const RHYTHM_MERGE_THRESHOLD_SECONDS = 3 * 60
 export const RHYTHM_MINIMUM_RECORDED_SECONDS = 60
 
-export const HABITS: HabitDefinition[] = [
-  {
-    id: 'mindfulEating',
-    title: 'Mindful eating',
-    detail: 'One calm, attentive meal.',
-  },
-  {
-    id: 'earlySleep',
-    title: 'Early sleep',
-    detail: 'A steady wind-down and earlier bedtime.',
-  },
-]
+export const BUILT_IN_HABIT_IDS = {
+  mindfulEating: 'mindfulEating',
+  earlySleep: 'earlySleep',
+} as const
+
+export function createDefaultHabits(): HabitDefinition[] {
+  return [
+    {
+      id: BUILT_IN_HABIT_IDS.mindfulEating,
+      name: 'Mindful eating',
+      category: 'Meal rhythm',
+      note: 'One calm, attentive meal.',
+      enabled: true,
+      showOnToday: true,
+      isBuiltIn: true,
+    },
+    {
+      id: BUILT_IN_HABIT_IDS.earlySleep,
+      name: 'Early sleep',
+      category: 'Rest',
+      note: 'A steady wind-down and earlier bedtime.',
+      enabled: true,
+      showOnToday: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'foot-soak',
+      name: 'Foot soak',
+      category: 'Evening care',
+      note: 'A short warm soak to settle at the end of the day.',
+      enabled: true,
+      showOnToday: false,
+      isBuiltIn: true,
+    },
+    {
+      id: 'moxibustion',
+      name: 'Moxibustion',
+      category: 'Care',
+      note: 'Gentle self-care practice when it feels appropriate.',
+      enabled: true,
+      showOnToday: false,
+      isBuiltIn: true,
+    },
+    {
+      id: 'walking',
+      name: 'Walking',
+      category: 'Movement',
+      note: 'A light everyday walk outside or indoors.',
+      enabled: true,
+      showOnToday: false,
+      isBuiltIn: true,
+    },
+    {
+      id: 'ginger-drink',
+      name: 'Ginger drink',
+      category: 'Kitchen',
+      note: 'A simple warm drink when it suits the day.',
+      enabled: true,
+      showOnToday: false,
+      isBuiltIn: true,
+    },
+  ]
+}
+
+export function createDefaultExercises(): ExerciseDefinition[] {
+  return [
+    {
+      id: 'routine-a-sit-to-stand',
+      name: 'Sit-to-stand from high chair',
+      category: 'Lower body',
+      description: 'A supported standing pattern from a higher seat.',
+      caution: 'Use a higher seat and keep the knees comfortable. Hold the chair if needed.',
+      suggestedVolume: '6 to 8 reps',
+      suggestedSets: '2 sets',
+      estimatedTime: '3 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-a-glute-bridge',
+      name: 'Glute bridge',
+      category: 'Lower body',
+      description: 'A gentle posterior-chain movement done on the floor.',
+      caution: 'Press through the feet and stop before any back strain.',
+      suggestedVolume: '8 to 10 reps',
+      suggestedSets: '2 sets',
+      estimatedTime: '3 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-a-chest-supported-row',
+      name: 'Chest-supported dumbbell row',
+      category: 'Upper body',
+      description: 'A pulling movement with chest support for steadiness.',
+      caution: 'Support the chest so the lower back stays quiet.',
+      suggestedVolume: '8 reps',
+      suggestedSets: '2 sets',
+      estimatedTime: '4 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-a-wall-push-up',
+      name: 'Wall push-up',
+      category: 'Upper body',
+      description: 'A gentle pressing pattern using the wall.',
+      caution: 'Keep the body long and choose a wall distance that feels steady.',
+      suggestedVolume: '6 to 10 reps',
+      suggestedSets: '2 sets',
+      estimatedTime: '3 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-a-dead-bug',
+      name: 'Dead bug',
+      category: 'Core',
+      description: 'A slow trunk-control pattern done with steady breathing.',
+      caution: 'Move slowly and keep the ribs down without breath-holding.',
+      suggestedVolume: '5 reps each side',
+      suggestedSets: '2 sets',
+      estimatedTime: '4 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-b-romanian-deadlift',
+      name: 'Dumbbell Romanian deadlift',
+      category: 'Lower body',
+      description: 'A hip-hinge pattern with a light dumbbell.',
+      caution: 'Soft knees, hinge at the hips, and keep the range modest.',
+      suggestedVolume: '8 reps',
+      suggestedSets: '2 sets',
+      estimatedTime: '4 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-b-side-lying-clam',
+      name: 'Side-lying clam',
+      category: 'Pelvic-floor-friendly',
+      description: 'A small side-lying hip exercise for controlled glute work.',
+      caution: 'Keep the pelvis still and avoid rolling backward.',
+      suggestedVolume: '10 reps each side',
+      suggestedSets: '2 sets',
+      estimatedTime: '4 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-b-floor-press',
+      name: 'Single-arm dumbbell floor press',
+      category: 'Upper body',
+      description: 'A light pressing movement from the floor.',
+      caution: 'Use a light weight and keep the shoulder comfortable.',
+      suggestedVolume: '8 reps each side',
+      suggestedSets: '2 sets',
+      estimatedTime: '4 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-b-band-pull-apart',
+      name: 'Band pull-apart',
+      category: 'Upper body',
+      description: 'A controlled upper-back movement with a light band.',
+      caution: 'Move with control and keep the shoulders down.',
+      suggestedVolume: '8 to 10 reps',
+      suggestedSets: '2 sets',
+      estimatedTime: '3 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+    {
+      id: 'routine-b-bird-dog',
+      name: 'Bird-dog',
+      category: 'Core',
+      description: 'A slow contralateral reach for trunk steadiness.',
+      caution: 'Reach long rather than high and keep the trunk steady.',
+      suggestedVolume: '5 reps each side',
+      suggestedSets: '2 sets',
+      estimatedTime: '4 min',
+      enabled: true,
+      isBuiltIn: true,
+    },
+  ]
+}
 
 export const STRENGTH_ROUTINES: StrengthRoutine[] = [
   {
     id: 'routine-a',
     title: 'Routine A',
-    exercises: [
-      {
-        id: 'routine-a-sit-to-stand',
-        name: 'Sit-to-stand from high chair',
-        reps: '2 sets of 6 to 8 reps',
-        caution: 'Use a higher seat and keep the knees comfortable. Hold the chair if needed.',
-      },
-      {
-        id: 'routine-a-glute-bridge',
-        name: 'Glute bridge',
-        reps: '2 sets of 8 to 10 reps',
-        caution: 'Press through the feet and stop before any back strain.',
-      },
-      {
-        id: 'routine-a-chest-supported-row',
-        name: 'Chest-supported dumbbell row',
-        reps: '2 sets of 8 reps',
-        caution: 'Support the chest so the lower back stays quiet.',
-      },
-      {
-        id: 'routine-a-wall-push-up',
-        name: 'Wall push-up',
-        reps: '2 sets of 6 to 10 reps',
-        caution: 'Keep the body long and choose a wall distance that feels steady.',
-      },
-      {
-        id: 'routine-a-dead-bug',
-        name: 'Dead bug',
-        reps: '2 sets of 5 reps each side',
-        caution: 'Move slowly and keep the ribs down without breath-holding.',
-      },
+    exerciseIds: [
+      'routine-a-sit-to-stand',
+      'routine-a-glute-bridge',
+      'routine-a-chest-supported-row',
+      'routine-a-wall-push-up',
+      'routine-a-dead-bug',
     ],
   },
   {
     id: 'routine-b',
     title: 'Routine B',
-    exercises: [
-      {
-        id: 'routine-b-romanian-deadlift',
-        name: 'Dumbbell Romanian deadlift',
-        reps: '2 sets of 8 reps',
-        caution: 'Soft knees, hinge at the hips, and keep the range modest.',
-      },
-      {
-        id: 'routine-b-side-lying-clam',
-        name: 'Side-lying clam',
-        reps: '2 sets of 10 reps each side',
-        caution: 'Keep the pelvis still and avoid rolling backward.',
-      },
-      {
-        id: 'routine-b-floor-press',
-        name: 'Single-arm dumbbell floor press',
-        reps: '2 sets of 8 reps each side',
-        caution: 'Use a light weight and keep the shoulder comfortable.',
-      },
-      {
-        id: 'routine-b-band-pull-apart',
-        name: 'Band pull-apart',
-        reps: '2 sets of 8 to 10 reps',
-        caution: 'Move with control and keep the shoulders down.',
-      },
-      {
-        id: 'routine-b-bird-dog',
-        name: 'Bird-dog',
-        reps: '2 sets of 5 reps each side',
-        caution: 'Reach long rather than high and keep the trunk steady.',
-      },
+    exerciseIds: [
+      'routine-b-romanian-deadlift',
+      'routine-b-side-lying-clam',
+      'routine-b-floor-press',
+      'routine-b-band-pull-apart',
+      'routine-b-bird-dog',
     ],
   },
 ]
@@ -290,7 +450,7 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
   const dayKey = toDayKey(now)
 
   return {
-    version: 1,
+    version: 2,
     currentDayKey: dayKey,
     selectedTab,
     rhythm: {
@@ -324,6 +484,10 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
     strength: {
       completedExerciseIds: [],
       lastUpdatedAt: null,
+    },
+    library: {
+      habits: createDefaultHabits(),
+      exercises: createDefaultExercises(),
     },
     history: [],
   }
@@ -372,4 +536,12 @@ export function formatCountdown(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+export function makeLocalId(prefix: string) {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `${prefix}-${crypto.randomUUID()}`
+  }
+
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }

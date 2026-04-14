@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BREATH_MODE_LABELS,
   BREATH_ROUND_OPTIONS,
-  HABITS,
+  BUILT_IN_HABIT_IDS,
   RHYTHM_BPM,
   RHYTHM_DURATIONS,
   RHYTHM_MERGE_THRESHOLD_SECONDS,
@@ -14,24 +14,34 @@ import {
   type BreathPhase,
   type BreathSessionEntry,
   type DayRecord,
+  type ExerciseDefinition,
+  type HabitDefinition,
   type HabitId,
   type HistorySummary,
+  type ResolvedStrengthRoutine,
   type RhythmEntry,
-  type StrengthRoutine,
   type TabKey,
   type TodayTimelineEvent,
   clampBreathPattern,
+  createDefaultExercises,
+  createDefaultHabits,
   createEmptyDayRecord,
   createInitialState,
   formatDurationMinutes,
   getActiveBreathPhases,
   getBreathPattern,
   getBreathPhaseDuration,
+  makeLocalId,
   toDayKey,
 } from './domain'
 import { BreathCuePlayer, WebMetronome } from './webAudio'
 
-const STORAGE_KEY = 'health-rhythm-web-v1'
+const STORAGE_KEY = 'health-rhythm-web-v2'
+
+type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab'> & {
+  version?: 1
+  selectedTab?: Exclude<TabKey, 'library'>
+}
 
 interface HistoryDailySummary {
   rhythmTotalMinutes: number
@@ -57,11 +67,16 @@ interface AppActions {
   setBreathSoundEnabled: (isEnabled: boolean) => void
   toggleHabit: (habitId: HabitId) => void
   toggleStrengthExercise: (exerciseId: string) => void
+  saveHabit: (habit: HabitDefinition) => void
+  saveExercise: (exercise: ExerciseDefinition) => void
 }
 
 export interface HealthRhythmViewModel extends AppActions {
   state: AppState
-  strengthRoutines: StrengthRoutine[]
+  visibleTodayHabits: HabitDefinition[]
+  habitLibrary: HabitDefinition[]
+  exerciseLibrary: ExerciseDefinition[]
+  strengthRoutines: ResolvedStrengthRoutine[]
   rhythmRemainingSeconds: number
   rhythmTotalMinutesToday: number
   breathTotalRoundsToday: number
@@ -86,25 +101,20 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
 
   useEffect(() => {
     saveState(state)
-    setSelectedHistoryDayKey((current) => {
-      if (current > state.currentDayKey) {
-        return state.currentDayKey
-      }
-      return current
-    })
+    setSelectedHistoryDayKey((current) => (current > state.currentDayKey ? state.currentDayKey : current))
   }, [state])
 
   useEffect(() => {
-    const handleVisibilityRefresh = () => {
+    const refresh = () => {
       setState((current) => refreshAppState(current, new Date()))
     }
 
-    window.addEventListener('focus', handleVisibilityRefresh)
-    document.addEventListener('visibilitychange', handleVisibilityRefresh)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
 
     return () => {
-      window.removeEventListener('focus', handleVisibilityRefresh)
-      document.removeEventListener('visibilitychange', handleVisibilityRefresh)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
     }
   }, [])
 
@@ -121,20 +131,12 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   }, [state.rhythm.status, state.breath.status])
 
   useEffect(() => {
-    const metronome = metronomeRef.current
-
     if (state.rhythm.status === 'running' && state.rhythm.isSoundEnabled) {
-      void metronome.start(RHYTHM_BPM)
+      void metronomeRef.current.start(RHYTHM_BPM)
     } else {
-      metronome.stop()
+      metronomeRef.current.stop()
     }
-
-    return () => {
-      if (state.rhythm.status !== 'running') {
-        metronome.stop()
-      }
-    }
-  }, [state.rhythm.status, state.rhythm.isSoundEnabled])
+  }, [state.rhythm.isSoundEnabled, state.rhythm.status])
 
   useEffect(() => {
     const cuePlayer = breathCuePlayerRef.current
@@ -166,8 +168,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         if (!RHYTHM_DURATIONS.includes(minutes as (typeof RHYTHM_DURATIONS)[number])) {
           return next
         }
-
-        if (next.rhythm.status !== 'idle' && next.rhythm.status !== 'completed') {
+        if (!['idle', 'completed'].includes(next.rhythm.status)) {
           return next
         }
 
@@ -203,7 +204,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     selectBreathMode(mode) {
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
-        if (next.breath.status !== 'idle' && next.breath.status !== 'completed') {
+        if (!['idle', 'completed'].includes(next.breath.status)) {
           return next
         }
 
@@ -223,20 +224,18 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     setBreathCustomValue(phase, value) {
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
-        if (next.breath.status !== 'idle' && next.breath.status !== 'completed') {
+        if (!['idle', 'completed'].includes(next.breath.status)) {
           return next
         }
 
         const pattern = { ...next.breath.customPattern }
-        pattern[phase === 'endHold' ? 'endHold' : phase] = value
+        pattern[phase] = value
 
         return syncHistory({
           ...next,
           breath: freshBreathState({
             ...next.breath,
-            selectedMode: next.breath.selectedMode,
             customPattern: clampBreathPattern(pattern),
-            selectedRounds: next.breath.selectedRounds,
             entriesToday: next.breath.entriesToday,
             isSoundEnabled: next.breath.isSoundEnabled,
           }),
@@ -249,8 +248,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         if (!BREATH_ROUND_OPTIONS.includes(rounds as (typeof BREATH_ROUND_OPTIONS)[number])) {
           return next
         }
-
-        if (next.breath.status !== 'idle' && next.breath.status !== 'completed') {
+        if (!['idle', 'completed'].includes(next.breath.status)) {
           return next
         }
 
@@ -258,8 +256,6 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
           ...next,
           breath: freshBreathState({
             ...next.breath,
-            selectedMode: next.breath.selectedMode,
-            customPattern: next.breath.customPattern,
             selectedRounds: rounds,
             entriesToday: next.breath.entriesToday,
             isSoundEnabled: next.breath.isSoundEnabled,
@@ -293,18 +289,18 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     toggleHabit(habitId) {
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
-        const completionTimes = { ...next.today.completionTimesByHabitId }
+        const completionTimesByHabitId = { ...next.today.completionTimesByHabitId }
 
-        if (completionTimes[habitId]) {
-          delete completionTimes[habitId]
+        if (completionTimesByHabitId[habitId]) {
+          delete completionTimesByHabitId[habitId]
         } else {
-          completionTimes[habitId] = new Date().toISOString()
+          completionTimesByHabitId[habitId] = new Date().toISOString()
         }
 
         return syncHistory({
           ...next,
           today: {
-            completionTimesByHabitId: completionTimes,
+            completionTimesByHabitId,
           },
         })
       })
@@ -329,19 +325,48 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         })
       })
     },
+    saveHabit(habit) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        const habits = upsertById(next.library.habits, sanitizeHabit(habit))
+
+        return syncHistory({
+          ...next,
+          library: {
+            ...next.library,
+            habits,
+          },
+        })
+      })
+    },
+    saveExercise(exercise) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        const exercises = upsertById(next.library.exercises, sanitizeExercise(exercise))
+
+        return syncHistory({
+          ...next,
+          library: {
+            ...next.library,
+            exercises,
+          },
+        })
+      })
+    },
   }
 
   const derived = useMemo(() => {
-    const historyWeekSummary = buildHistorySummary(
-      state.history,
-      currentIntervalDayKeys('week', new Date()),
-    )
+    const visibleTodayHabits = nextVisibleTodayHabits(state.library.habits)
+    const strengthRoutines = resolveStrengthRoutines(state.library.exercises)
+    const historyWeekSummary = buildHistorySummary(state.history, currentIntervalDayKeys('week', new Date()))
     const historyMonthSummary = buildHistorySummary(
       state.history,
       currentIntervalDayKeys('month', new Date()),
     )
 
     return {
+      visibleTodayHabits,
+      strengthRoutines,
       rhythmRemainingSeconds: getRhythmRemainingSeconds(state.rhythm),
       rhythmTotalMinutesToday: state.rhythm.entriesToday.reduce(
         (total, entry) => total + displayMinutes(entry.durationSeconds),
@@ -353,8 +378,8 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       ),
       breathTotalSessionsToday: state.breath.entriesToday.length,
       strengthCompletedCountToday: state.strength.completedExerciseIds.length,
-      strengthSummaryToday: buildStrengthSummary(state.strength.completedExerciseIds),
-      todayTimeline: buildTodayTimeline(state),
+      strengthSummaryToday: buildStrengthSummary(state.strength.completedExerciseIds, strengthRoutines),
+      todayTimeline: buildTodayTimeline(state, visibleTodayHabits, strengthRoutines),
       historyWeekSummary,
       historyMonthSummary,
     }
@@ -364,8 +389,12 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     state,
     selectedHistoryDayKey,
     setSelectedHistoryDayKey,
-    strengthRoutines: STRENGTH_ROUTINES,
-    historyDailySummary: (dayKey) => buildDailyHistorySummary(recordForDay(state.history, dayKey)),
+    visibleTodayHabits: derived.visibleTodayHabits,
+    habitLibrary: state.library.habits,
+    exerciseLibrary: state.library.exercises,
+    strengthRoutines: derived.strengthRoutines,
+    historyDailySummary: (dayKey) =>
+      buildDailyHistorySummary(recordForDay(state.history, dayKey), derived.strengthRoutines),
     historyWeekSummary: derived.historyWeekSummary,
     historyMonthSummary: derived.historyMonthSummary,
     rhythmRemainingSeconds: derived.rhythmRemainingSeconds,
@@ -381,16 +410,46 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
 
 function loadState(): AppState {
   try {
-    const rawValue = localStorage.getItem(STORAGE_KEY)
+    const rawValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem('health-rhythm-web-v1')
     if (!rawValue) {
       return syncHistory(createInitialState(new Date()))
     }
 
-    const parsed = JSON.parse(rawValue) as AppState
-    return syncHistory(ensureCurrentDay(parsed, new Date()))
+    const parsed = JSON.parse(rawValue) as AppState | LegacyAppState
+    const migrated = migrateState(parsed, new Date())
+    return syncHistory(ensureCurrentDay(migrated, new Date()))
   } catch {
     return syncHistory(createInitialState(new Date()))
   }
+}
+
+function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState {
+  if ((rawState as AppState).version === 2 && (rawState as AppState).library) {
+    const state = rawState as AppState
+    return {
+      ...state,
+      library: {
+        habits: mergeBuiltInHabits(state.library.habits),
+        exercises: mergeBuiltInExercises(state.library.exercises),
+      },
+    }
+  }
+
+  const legacy = rawState as LegacyAppState
+  return syncHistory({
+    version: 2,
+    currentDayKey: legacy.currentDayKey ?? toDayKey(now),
+    selectedTab: legacy.selectedTab ?? 'rhythm',
+    rhythm: legacy.rhythm,
+    breath: legacy.breath,
+    today: legacy.today,
+    strength: legacy.strength,
+    library: {
+      habits: createDefaultHabits(),
+      exercises: createDefaultExercises(),
+    },
+    history: legacy.history ?? [],
+  })
 }
 
 function saveState(state: AppState) {
@@ -403,12 +462,12 @@ function ensureCurrentDay(state: AppState, now: Date): AppState {
     return syncHistory(refreshRunningState(state, now))
   }
 
-  const refreshedCurrentState = syncHistory(refreshRunningState(state, now))
-  const nextState: AppState = {
-    ...refreshedCurrentState,
+  const refreshed = syncHistory(refreshRunningState(state, now))
+  return syncHistory({
+    ...refreshed,
     currentDayKey,
     rhythm: {
-      ...refreshedCurrentState.rhythm,
+      ...refreshed.rhythm,
       status: 'idle',
       entriesToday: [],
       sessionStartAt: null,
@@ -416,7 +475,7 @@ function ensureCurrentDay(state: AppState, now: Date): AppState {
       elapsedSecondsBeforeCurrentRun: 0,
     },
     breath: freshBreathState({
-      ...refreshedCurrentState.breath,
+      ...refreshed.breath,
       entriesToday: [],
       status: 'idle',
       sessionStartAt: null,
@@ -433,9 +492,7 @@ function ensureCurrentDay(state: AppState, now: Date): AppState {
       completedExerciseIds: [],
       lastUpdatedAt: null,
     },
-  }
-
-  return syncHistory(nextState)
+  })
 }
 
 function refreshAppState(state: AppState, now: Date) {
@@ -443,17 +500,14 @@ function refreshAppState(state: AppState, now: Date) {
 }
 
 function refreshRunningState(state: AppState, now: Date): AppState {
-  let nextState = state
-
+  let next = state
   if (state.rhythm.status === 'running') {
-    nextState = refreshRhythmState(nextState, now)
+    next = refreshRhythmState(next, now)
   }
-
-  if (nextState.breath.status === 'running') {
-    nextState = refreshBreathState(nextState, now)
+  if (next.breath.status === 'running') {
+    next = refreshBreathState(next, now)
   }
-
-  return nextState
+  return next
 }
 
 function refreshRhythmState(state: AppState, now: Date): AppState {
@@ -463,7 +517,6 @@ function refreshRhythmState(state: AppState, now: Date): AppState {
 
   const elapsedSeconds = currentRhythmElapsedSeconds(state.rhythm, now)
   const targetSeconds = state.rhythm.selectedDurationMinutes * 60
-
   if (elapsedSeconds < targetSeconds) {
     return state
   }
@@ -508,7 +561,7 @@ function toggleRhythmState(state: AppState, now: Date): AppState {
 }
 
 function endRhythmState(state: AppState, now: Date): AppState {
-  if (state.rhythm.status !== 'running' && state.rhythm.status !== 'paused') {
+  if (!['running', 'paused'].includes(state.rhythm.status)) {
     return syncHistory({
       ...state,
       rhythm: {
@@ -521,8 +574,7 @@ function endRhythmState(state: AppState, now: Date): AppState {
     })
   }
 
-  const elapsedSeconds = currentRhythmElapsedSeconds(state.rhythm, now)
-  return finalizeRhythmState(state, now, elapsedSeconds, false)
+  return finalizeRhythmState(state, now, currentRhythmElapsedSeconds(state.rhythm, now), false)
 }
 
 function finalizeRhythmState(
@@ -570,48 +622,44 @@ function appendRhythmEntry(entries: RhythmEntry[], newEntry: RhythmEntry) {
     return [...entries, newEntry]
   }
 
-  const mergedEntry: RhythmEntry = {
-    id: lastEntry.id,
-    startAt: lastEntry.startAt,
-    endAt: newEntry.endAt,
-    durationSeconds: lastEntry.durationSeconds + newEntry.durationSeconds,
-  }
-
-  return [...entries.slice(0, -1), mergedEntry]
+  return [
+    ...entries.slice(0, -1),
+    {
+      id: lastEntry.id,
+      startAt: lastEntry.startAt,
+      endAt: newEntry.endAt,
+      durationSeconds: lastEntry.durationSeconds + newEntry.durationSeconds,
+    },
+  ]
 }
 
-function currentRhythmElapsedSeconds(rhythm: AppState['rhythm'], now: Date) {
-  if (rhythm.status !== 'running' || !rhythm.activeStartAt) {
-    return rhythm.elapsedSecondsBeforeCurrentRun
+function currentRhythmElapsedSeconds(state: AppState['rhythm'], now: Date) {
+  if (state.status !== 'running' || !state.activeStartAt) {
+    return state.elapsedSecondsBeforeCurrentRun
   }
 
-  const runningSeconds = Math.max(
-    0,
-    Math.floor((now.getTime() - new Date(rhythm.activeStartAt).getTime()) / 1000),
+  return (
+    state.elapsedSecondsBeforeCurrentRun +
+    Math.max(0, Math.floor((now.getTime() - new Date(state.activeStartAt).getTime()) / 1000))
   )
-  return rhythm.elapsedSecondsBeforeCurrentRun + runningSeconds
 }
 
-function getRhythmRemainingSeconds(rhythm: AppState['rhythm']) {
+function getRhythmRemainingSeconds(state: AppState['rhythm']) {
   const elapsedSeconds =
-    rhythm.status === 'completed'
-      ? rhythm.selectedDurationMinutes * 60
-      : currentRhythmElapsedSeconds(rhythm, new Date())
-
-  return Math.max(0, rhythm.selectedDurationMinutes * 60 - elapsedSeconds)
+    state.status === 'completed' ? state.selectedDurationMinutes * 60 : currentRhythmElapsedSeconds(state, new Date())
+  return Math.max(0, state.selectedDurationMinutes * 60 - elapsedSeconds)
 }
 
-function freshBreathState(breath: AppState['breath']): AppState['breath'] {
-  const pattern = getBreathPattern(breath.selectedMode, breath.customPattern)
+function freshBreathState(state: AppState['breath']): AppState['breath'] {
+  const pattern = getBreathPattern(state.selectedMode, state.customPattern)
   const firstPhase = getActiveBreathPhases(pattern)[0] ?? 'inhale'
-
   return {
-    ...breath,
-    customPattern: clampBreathPattern(breath.customPattern),
+    ...state,
+    customPattern: clampBreathPattern(state.customPattern),
     currentPhase: firstPhase,
     phaseRemainingSeconds: getBreathPhaseDuration(pattern, firstPhase),
     currentRound: 1,
-    completedRounds: breath.status === 'completed' ? breath.completedRounds : 0,
+    completedRounds: state.status === 'completed' ? state.completedRounds : 0,
     sessionStartAt: null,
     activeRunStartAt: null,
     phaseEndAt: null,
@@ -625,6 +673,7 @@ function toggleBreathState(state: AppState, now: Date): AppState {
     case 'completed': {
       const pattern = getBreathPattern(state.breath.selectedMode, state.breath.customPattern)
       const firstPhase = getActiveBreathPhases(pattern)[0] ?? 'inhale'
+      const phaseSeconds = getBreathPhaseDuration(pattern, firstPhase)
 
       return syncHistory({
         ...state,
@@ -632,12 +681,12 @@ function toggleBreathState(state: AppState, now: Date): AppState {
           ...state.breath,
           status: 'running',
           currentPhase: firstPhase,
-          phaseRemainingSeconds: getBreathPhaseDuration(pattern, firstPhase),
+          phaseRemainingSeconds: phaseSeconds,
           currentRound: 1,
           completedRounds: 0,
           sessionStartAt: now.toISOString(),
           activeRunStartAt: now.toISOString(),
-          phaseEndAt: new Date(now.getTime() + getBreathPhaseDuration(pattern, firstPhase) * 1000).toISOString(),
+          phaseEndAt: new Date(now.getTime() + phaseSeconds * 1000).toISOString(),
           elapsedSecondsBeforeCurrentRun: 0,
         },
       })
@@ -668,18 +717,14 @@ function toggleBreathState(state: AppState, now: Date): AppState {
 }
 
 function endBreathState(state: AppState, now: Date): AppState {
-  if (state.breath.status !== 'running' && state.breath.status !== 'paused') {
+  if (!['running', 'paused'].includes(state.breath.status)) {
     return syncHistory({
       ...state,
-      breath: freshBreathState({
-        ...state.breath,
-        status: 'idle',
+      breath: {
+        ...freshBreathState(state.breath),
         entriesToday: state.breath.entriesToday,
-        isSoundEnabled: state.breath.isSoundEnabled,
-        selectedMode: state.breath.selectedMode,
-        customPattern: state.breath.customPattern,
-        selectedRounds: state.breath.selectedRounds,
-      }),
+        status: 'idle',
+      },
     })
   }
 
@@ -691,33 +736,33 @@ function refreshBreathState(state: AppState, now: Date): AppState {
     return state
   }
 
-  let nextState = state
-  let loopGuard = 0
+  let next = state
+  let guard = 0
 
   while (
-    nextState.breath.status === 'running' &&
-    nextState.breath.phaseEndAt &&
-    new Date(nextState.breath.phaseEndAt).getTime() <= now.getTime() &&
-    loopGuard < 50
+    next.breath.status === 'running' &&
+    next.breath.phaseEndAt &&
+    new Date(next.breath.phaseEndAt).getTime() <= now.getTime() &&
+    guard < 50
   ) {
-    nextState = advanceBreathPhase(nextState, new Date(nextState.breath.phaseEndAt))
-    loopGuard += 1
+    next = advanceBreathPhase(next, new Date(next.breath.phaseEndAt))
+    guard += 1
   }
 
-  if (nextState.breath.status !== 'running' || !nextState.breath.phaseEndAt) {
-    return nextState
+  if (next.breath.status !== 'running' || !next.breath.phaseEndAt) {
+    return next
   }
 
-  const remainingSeconds = getBreathPhaseRemainingSeconds(nextState.breath, now)
-  if (remainingSeconds === nextState.breath.phaseRemainingSeconds) {
-    return nextState
+  const phaseRemainingSeconds = getBreathPhaseRemainingSeconds(next.breath, now)
+  if (phaseRemainingSeconds === next.breath.phaseRemainingSeconds) {
+    return next
   }
 
   return syncHistory({
-    ...nextState,
+    ...next,
     breath: {
-      ...nextState.breath,
-      phaseRemainingSeconds: remainingSeconds,
+      ...next.breath,
+      phaseRemainingSeconds,
     },
   })
 }
@@ -747,6 +792,7 @@ function advanceBreathPhase(state: AppState, boundary: Date): AppState {
     }
 
     const nextPhase = phases[0]
+    const phaseSeconds = getBreathPhaseDuration(pattern, nextPhase)
     return syncHistory({
       ...state,
       breath: {
@@ -754,24 +800,21 @@ function advanceBreathPhase(state: AppState, boundary: Date): AppState {
         completedRounds,
         currentRound: completedRounds + 1,
         currentPhase: nextPhase,
-        phaseRemainingSeconds: getBreathPhaseDuration(pattern, nextPhase),
-        phaseEndAt: new Date(
-          boundary.getTime() + getBreathPhaseDuration(pattern, nextPhase) * 1000,
-        ).toISOString(),
+        phaseRemainingSeconds: phaseSeconds,
+        phaseEndAt: new Date(boundary.getTime() + phaseSeconds * 1000).toISOString(),
       },
     })
   }
 
   const nextPhase = phases[currentIndex + 1]
+  const phaseSeconds = getBreathPhaseDuration(pattern, nextPhase)
   return syncHistory({
     ...state,
     breath: {
       ...state.breath,
       currentPhase: nextPhase,
-      phaseRemainingSeconds: getBreathPhaseDuration(pattern, nextPhase),
-      phaseEndAt: new Date(
-        boundary.getTime() + getBreathPhaseDuration(pattern, nextPhase) * 1000,
-      ).toISOString(),
+      phaseRemainingSeconds: phaseSeconds,
+      phaseEndAt: new Date(boundary.getTime() + phaseSeconds * 1000).toISOString(),
     },
   })
 }
@@ -779,7 +822,6 @@ function advanceBreathPhase(state: AppState, boundary: Date): AppState {
 function finalizeBreathState(state: AppState, endTime: Date): AppState {
   const totalDurationSeconds = currentBreathElapsedSeconds(state.breath, endTime)
   const shouldRecord = totalDurationSeconds > 0 && state.breath.sessionStartAt
-
   const entriesToday = shouldRecord
     ? [
         ...state.breath.entriesToday,
@@ -801,10 +843,6 @@ function finalizeBreathState(state: AppState, endTime: Date): AppState {
       ...freshBreathState({
         ...state.breath,
         entriesToday,
-        selectedMode: state.breath.selectedMode,
-        customPattern: state.breath.customPattern,
-        selectedRounds: state.breath.selectedRounds,
-        isSoundEnabled: state.breath.isSoundEnabled,
       }),
       entriesToday,
       status: shouldRecord ? 'completed' : 'idle',
@@ -813,24 +851,22 @@ function finalizeBreathState(state: AppState, endTime: Date): AppState {
   })
 }
 
-function currentBreathElapsedSeconds(breath: AppState['breath'], now: Date) {
-  if (breath.status !== 'running' || !breath.activeRunStartAt) {
-    return breath.elapsedSecondsBeforeCurrentRun
+function currentBreathElapsedSeconds(state: AppState['breath'], now: Date) {
+  if (state.status !== 'running' || !state.activeRunStartAt) {
+    return state.elapsedSecondsBeforeCurrentRun
   }
 
-  const runningSeconds = Math.max(
-    0,
-    Math.floor((now.getTime() - new Date(breath.activeRunStartAt).getTime()) / 1000),
+  return (
+    state.elapsedSecondsBeforeCurrentRun +
+    Math.max(0, Math.floor((now.getTime() - new Date(state.activeRunStartAt).getTime()) / 1000))
   )
-  return breath.elapsedSecondsBeforeCurrentRun + runningSeconds
 }
 
-function getBreathPhaseRemainingSeconds(breath: AppState['breath'], now: Date) {
-  if (!breath.phaseEndAt) {
-    return breath.phaseRemainingSeconds
+function getBreathPhaseRemainingSeconds(state: AppState['breath'], now: Date) {
+  if (!state.phaseEndAt) {
+    return state.phaseRemainingSeconds
   }
-
-  return Math.max(1, Math.ceil((new Date(breath.phaseEndAt).getTime() - now.getTime()) / 1000))
+  return Math.max(1, Math.ceil((new Date(state.phaseEndAt).getTime() - now.getTime()) / 1000))
 }
 
 function syncHistory(state: AppState): AppState {
@@ -841,8 +877,7 @@ function syncHistory(state: AppState): AppState {
   currentRecord.strengthLastUpdatedAt = state.strength.lastUpdatedAt
   currentRecord.habits = state.today.completionTimesByHabitId
 
-  const otherRecords = state.history.filter((record) => record.dayKey !== state.currentDayKey)
-  const history = [...otherRecords, currentRecord].sort((left, right) =>
+  const history = [...state.history.filter((record) => record.dayKey !== state.currentDayKey), currentRecord].sort((left, right) =>
     left.dayKey < right.dayKey ? 1 : -1,
   )
 
@@ -852,7 +887,38 @@ function syncHistory(state: AppState): AppState {
   }
 }
 
-function buildTodayTimeline(state: AppState): TodayTimelineEvent[] {
+function resolveStrengthRoutines(exercises: ExerciseDefinition[]): ResolvedStrengthRoutine[] {
+  const byId = new Map(exercises.map((exercise) => [exercise.id, exercise]))
+  return STRENGTH_ROUTINES.map((routine) => ({
+    id: routine.id,
+    title: routine.title,
+    exercises: routine.exerciseIds.map((exerciseId) => {
+      const exercise = byId.get(exerciseId)
+      if (exercise) {
+        return exercise
+      }
+
+      return {
+        id: exerciseId,
+        name: 'Missing exercise',
+        category: 'Unavailable',
+        description: 'This built-in exercise entry is not currently available in the library.',
+        caution: 'Re-enable or restore this exercise in the library.',
+        suggestedVolume: '',
+        suggestedSets: '',
+        estimatedTime: '',
+        enabled: false,
+      }
+    }),
+  }))
+}
+
+function buildTodayTimeline(
+  state: AppState,
+  visibleTodayHabits: HabitDefinition[],
+  strengthRoutines: ResolvedStrengthRoutine[],
+): TodayTimelineEvent[] {
+  const habitById = new Map(state.library.habits.map((habit) => [habit.id, habit]))
   const events: TodayTimelineEvent[] = [
     ...state.rhythm.entriesToday.map((entry) => ({
       id: `rhythm-${entry.id}`,
@@ -879,29 +945,49 @@ function buildTodayTimeline(state: AppState): TodayTimelineEvent[] {
             id: 'strength-today',
             timestamp: state.strength.lastUpdatedAt,
             title: 'Strength',
-            summary: buildStrengthSummary(state.strength.completedExerciseIds),
-            detail: buildStrengthDetail(state.strength.completedExerciseIds),
+            summary: buildStrengthSummary(state.strength.completedExerciseIds, strengthRoutines),
+            detail: buildStrengthDetail(state.strength.completedExerciseIds, strengthRoutines),
             kind: 'strength' as const,
           },
         ]
       : []),
-    ...HABITS.flatMap((habit) => {
+    ...visibleTodayHabits.flatMap((habit) => {
       const completionTime = state.today.completionTimesByHabitId[habit.id]
       if (!completionTime) {
         return []
       }
-
       return [
         {
           id: `habit-${habit.id}`,
           timestamp: completionTime,
-          title: habit.title,
+          title: habit.name,
           summary: 'Completed',
-          detail: habit.detail,
+          detail: habit.note,
           kind: 'habit' as const,
         },
       ]
     }),
+    ...Object.entries(state.today.completionTimesByHabitId)
+      .filter(([habitId]) => !visibleTodayHabits.some((habit) => habit.id === habitId))
+      .flatMap(([habitId, completionTime]) => {
+        if (!completionTime) {
+          return []
+        }
+        const habit = habitById.get(habitId)
+        if (!habit || !habit.enabled) {
+          return []
+        }
+        return [
+          {
+            id: `habit-${habit.id}`,
+            timestamp: completionTime,
+            title: habit.name,
+            summary: 'Completed',
+            detail: habit.note,
+            kind: 'habit' as const,
+          },
+        ]
+      }),
   ]
 
   return events.sort((left, right) => {
@@ -914,40 +1000,32 @@ function buildTodayTimeline(state: AppState): TodayTimelineEvent[] {
   })
 }
 
-function buildStrengthSummary(completedExerciseIds: string[]) {
+function buildStrengthSummary(completedExerciseIds: string[], routines: ResolvedStrengthRoutine[]) {
   if (completedExerciseIds.length === 0) {
     return 'Not done'
   }
 
-  const routinesWithProgress = STRENGTH_ROUTINES.filter((routine) =>
-    routine.exercises.some((exercise) => completedExerciseIds.includes(exercise.id)),
-  )
+  const matchingRoutine = routines.find((routine) => {
+    const routineCount = routine.exercises.filter((exercise) => completedExerciseIds.includes(exercise.id)).length
+    return routineCount > 0 && routineCount === completedExerciseIds.length
+  })
 
-  if (routinesWithProgress.length === 1) {
-    const routine = routinesWithProgress[0]
-    const completedCount = routine.exercises.filter((exercise) =>
-      completedExerciseIds.includes(exercise.id),
-    ).length
-    return `${completedCount} of ${routine.exercises.length}`
+  if (matchingRoutine) {
+    return `${completedExerciseIds.length} of ${matchingRoutine.exercises.length}`
   }
 
   return `${completedExerciseIds.length} exercises`
 }
 
-function buildStrengthDetail(completedExerciseIds: string[]) {
-  const names = STRENGTH_ROUTINES.flatMap((routine) => routine.exercises)
+function buildStrengthDetail(completedExerciseIds: string[], routines: ResolvedStrengthRoutine[]) {
+  return routines
+    .flatMap((routine) => routine.exercises)
     .filter((exercise) => completedExerciseIds.includes(exercise.id))
     .map((exercise) => exercise.name)
-
-  return names.join(', ')
+    .join(', ')
 }
 
-function buildDailyHistorySummary(record: DayRecord): HistoryDailySummary {
-  const breathRoundsCount = record.breathSessions.reduce(
-    (total, session) => total + session.completedRounds,
-    0,
-  )
-
+function buildDailyHistorySummary(record: DayRecord, routines: ResolvedStrengthRoutine[]): HistoryDailySummary {
   return {
     rhythmTotalMinutes: record.rhythmEntries.reduce(
       (total, entry) => total + displayMinutes(entry.durationSeconds),
@@ -955,28 +1033,25 @@ function buildDailyHistorySummary(record: DayRecord): HistoryDailySummary {
     ),
     rhythmEntriesCount: record.rhythmEntries.length,
     breathSessionsCount: record.breathSessions.length,
-    breathRoundsCount,
-    strengthSummary: buildStrengthSummary(record.strengthCompletedExerciseIds),
-    mindfulEatingCompleted: Boolean(record.habits.mindfulEating),
-    earlySleepCompleted: Boolean(record.habits.earlySleep),
+    breathRoundsCount: record.breathSessions.reduce((total, session) => total + session.completedRounds, 0),
+    strengthSummary: buildStrengthSummary(record.strengthCompletedExerciseIds, routines),
+    mindfulEatingCompleted: Boolean(record.habits[BUILT_IN_HABIT_IDS.mindfulEating]),
+    earlySleepCompleted: Boolean(record.habits[BUILT_IN_HABIT_IDS.earlySleep]),
   }
 }
 
 function currentIntervalDayKeys(kind: 'week' | 'month', now: Date) {
   const keys: string[] = []
-
   if (kind === 'week') {
     const current = new Date(now)
     const day = current.getDay()
     const diffToMonday = day === 0 ? -6 : 1 - day
     current.setHours(12, 0, 0, 0)
     current.setDate(current.getDate() + diffToMonday)
-
     for (let index = 0; index < 7; index += 1) {
       keys.push(toDayKey(current))
       current.setDate(current.getDate() + 1)
     }
-
     return keys
   }
 
@@ -999,11 +1074,9 @@ function buildHistorySummary(history: DayRecord[], dayKeys: string[]): HistorySu
       0,
     ),
     rhythmDaysCount: matchingRecords.filter((record) => record.rhythmEntries.length > 0).length,
-    strengthDaysCount: matchingRecords.filter(
-      (record) => record.strengthCompletedExerciseIds.length > 0,
-    ).length,
-    mindfulEatingDaysCount: matchingRecords.filter((record) => Boolean(record.habits.mindfulEating)).length,
-    earlySleepDaysCount: matchingRecords.filter((record) => Boolean(record.habits.earlySleep)).length,
+    strengthDaysCount: matchingRecords.filter((record) => record.strengthCompletedExerciseIds.length > 0).length,
+    mindfulEatingDaysCount: matchingRecords.filter((record) => Boolean(record.habits[BUILT_IN_HABIT_IDS.mindfulEating])).length,
+    earlySleepDaysCount: matchingRecords.filter((record) => Boolean(record.habits[BUILT_IN_HABIT_IDS.earlySleep])).length,
   }
 }
 
@@ -1013,4 +1086,64 @@ function recordForDay(history: DayRecord[], dayKey: string) {
 
 function displayMinutes(totalSeconds: number) {
   return Math.max(1, Math.floor(totalSeconds / 60))
+}
+
+function nextVisibleTodayHabits(habits: HabitDefinition[]) {
+  return habits.filter((habit) => habit.enabled && habit.showOnToday)
+}
+
+function mergeBuiltInHabits(existingHabits: HabitDefinition[]) {
+  const defaults = createDefaultHabits()
+  const byId = new Map(existingHabits.map((habit) => [habit.id, habit]))
+  for (const habit of defaults) {
+    if (!byId.has(habit.id)) {
+      byId.set(habit.id, habit)
+    }
+  }
+  return Array.from(byId.values())
+}
+
+function mergeBuiltInExercises(existingExercises: ExerciseDefinition[]) {
+  const defaults = createDefaultExercises()
+  const byId = new Map(existingExercises.map((exercise) => [exercise.id, exercise]))
+  for (const exercise of defaults) {
+    if (!byId.has(exercise.id)) {
+      byId.set(exercise.id, exercise)
+    }
+  }
+  return Array.from(byId.values())
+}
+
+function upsertById<T extends { id: string }>(items: T[], item: T) {
+  const existingIndex = items.findIndex((current) => current.id === item.id)
+  if (existingIndex === -1) {
+    return [...items, item]
+  }
+  const next = [...items]
+  next[existingIndex] = item
+  return next
+}
+
+function sanitizeHabit(habit: HabitDefinition): HabitDefinition {
+  return {
+    ...habit,
+    id: habit.id || makeLocalId('habit'),
+    name: habit.name.trim() || 'Untitled habit',
+    category: habit.category.trim() || 'General',
+    note: habit.note.trim(),
+  }
+}
+
+function sanitizeExercise(exercise: ExerciseDefinition): ExerciseDefinition {
+  return {
+    ...exercise,
+    id: exercise.id || makeLocalId('exercise'),
+    name: exercise.name.trim() || 'Untitled exercise',
+    category: exercise.category.trim() || 'General',
+    description: exercise.description.trim(),
+    caution: exercise.caution.trim(),
+    suggestedVolume: exercise.suggestedVolume.trim(),
+    suggestedSets: exercise.suggestedSets.trim(),
+    estimatedTime: exercise.estimatedTime.trim(),
+  }
 }
