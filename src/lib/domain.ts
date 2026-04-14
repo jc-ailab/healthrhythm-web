@@ -64,6 +64,7 @@ export interface TodayState {
 export interface StrengthState {
   completedExerciseIds: string[]
   lastUpdatedAt: string | null
+  routines: StrengthRoutine[]
 }
 
 export interface DayRecord {
@@ -104,7 +105,7 @@ export interface LibraryState {
 }
 
 export interface AppState {
-  version: 2
+  version: 3
   currentDayKey: string
   selectedTab: TabKey
   rhythm: RhythmState
@@ -117,8 +118,17 @@ export interface AppState {
 
 export interface StrengthRoutine {
   id: string
-  title: string
-  exerciseIds: string[]
+  name: string
+  enabled: boolean
+  exercises: RoutineExercise[]
+  isBuiltIn?: boolean
+}
+
+export interface RoutineExercise {
+  exerciseId: string
+  customSets?: string
+  customVolume?: string
+  customTime?: string
 }
 
 export interface ResolvedStrengthExercise {
@@ -135,8 +145,19 @@ export interface ResolvedStrengthExercise {
 
 export interface ResolvedStrengthRoutine {
   id: string
-  title: string
-  exercises: ResolvedStrengthExercise[]
+  name: string
+  enabled: boolean
+  isBuiltIn?: boolean
+  exercises: ResolvedRoutineExercise[]
+}
+
+export interface ResolvedRoutineExercise extends ResolvedStrengthExercise {
+  customSets?: string
+  customVolume?: string
+  customTime?: string
+  displaySets: string
+  displayVolume: string
+  displayTime: string
 }
 
 export interface HistorySummary {
@@ -354,24 +375,28 @@ export function createDefaultExercises(): ExerciseDefinition[] {
 export const STRENGTH_ROUTINES: StrengthRoutine[] = [
   {
     id: 'routine-a',
-    title: 'Routine A',
-    exerciseIds: [
-      'routine-a-sit-to-stand',
-      'routine-a-glute-bridge',
-      'routine-a-chest-supported-row',
-      'routine-a-wall-push-up',
-      'routine-a-dead-bug',
+    name: 'Routine A',
+    enabled: true,
+    isBuiltIn: true,
+    exercises: [
+      { exerciseId: 'routine-a-sit-to-stand' },
+      { exerciseId: 'routine-a-glute-bridge' },
+      { exerciseId: 'routine-a-chest-supported-row' },
+      { exerciseId: 'routine-a-wall-push-up' },
+      { exerciseId: 'routine-a-dead-bug' },
     ],
   },
   {
     id: 'routine-b',
-    title: 'Routine B',
-    exerciseIds: [
-      'routine-b-romanian-deadlift',
-      'routine-b-side-lying-clam',
-      'routine-b-floor-press',
-      'routine-b-band-pull-apart',
-      'routine-b-bird-dog',
+    name: 'Routine B',
+    enabled: true,
+    isBuiltIn: true,
+    exercises: [
+      { exerciseId: 'routine-b-romanian-deadlift' },
+      { exerciseId: 'routine-b-side-lying-clam' },
+      { exerciseId: 'routine-b-floor-press' },
+      { exerciseId: 'routine-b-band-pull-apart' },
+      { exerciseId: 'routine-b-bird-dog' },
     ],
   },
 ]
@@ -450,7 +475,7 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
   const dayKey = toDayKey(now)
 
   return {
-    version: 2,
+    version: 3,
     currentDayKey: dayKey,
     selectedTab,
     rhythm: {
@@ -484,6 +509,7 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
     strength: {
       completedExerciseIds: [],
       lastUpdatedAt: null,
+      routines: STRENGTH_ROUTINES,
     },
     library: {
       habits: createDefaultHabits(),

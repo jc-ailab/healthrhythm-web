@@ -18,12 +18,20 @@ import {
   type ExerciseDefinition,
   type HabitDefinition,
   type ResolvedStrengthRoutine,
+  type StrengthRoutine,
   type TabKey,
   type TodayTimelineEvent,
 } from './lib/domain'
 import { useHealthRhythmApp } from './lib/state'
 
-type LibrarySection = 'habits' | 'exercises'
+type LibrarySection = 'habits' | 'exercises' | 'routines'
+
+type RoutineDraft = {
+  id?: string
+  name: string
+  enabled: boolean
+  isBuiltIn?: boolean
+}
 
 type HabitDraft = {
   id?: string
@@ -73,6 +81,8 @@ function App() {
   const [librarySection, setLibrarySection] = useState<LibrarySection>('habits')
   const [habitDraft, setHabitDraft] = useState<HabitDraft | null>(null)
   const [exerciseDraft, setExerciseDraft] = useState<ExerciseDraft | null>(null)
+  const [routineDraft, setRoutineDraft] = useState<RoutineDraft | null>(null)
+  const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null)
 
   const selectedTab = app.state.selectedTab
   const selectedRoutine =
@@ -174,9 +184,18 @@ function App() {
             section={librarySection}
             habits={app.habitLibrary}
             exercises={app.exerciseLibrary}
+            routines={app.strengthRoutineLibrary}
             habitDraft={habitDraft}
             exerciseDraft={exerciseDraft}
-            onSelectSection={setLibrarySection}
+            routineDraft={routineDraft}
+            editingRoutineId={editingRoutineId}
+            onSelectSection={(s) => {
+              setLibrarySection(s)
+              setHabitDraft(null)
+              setExerciseDraft(null)
+              setRoutineDraft(null)
+              setEditingRoutineId(null)
+            }}
             onAddHabit={() => {
               setHabitDraft(EMPTY_HABIT_DRAFT)
               setExerciseDraft(null)
@@ -249,6 +268,52 @@ function App() {
               setExerciseDraft(null)
             }}
             onCancelExercise={() => setExerciseDraft(null)}
+            onAddRoutine={() => {
+              setRoutineDraft({ name: '', enabled: true })
+              setEditingRoutineId(null)
+            }}
+            onEditRoutine={(routine) => {
+              setRoutineDraft({
+                id: routine.id,
+                name: routine.name,
+                enabled: routine.enabled,
+                isBuiltIn: routine.isBuiltIn,
+              })
+              setEditingRoutineId(routine.id)
+            }}
+            onRoutineDraftChange={(update) =>
+              setRoutineDraft((current) => (current ? { ...current, ...update } : current))
+            }
+            onSaveRoutine={() => {
+              if (!routineDraft || !routineDraft.name.trim()) return
+              const id = routineDraft.id ?? makeLocalId('routine')
+              const existing = app.strengthRoutineLibrary.find((r) => r.id === id)
+              app.saveStrengthRoutine({
+                id,
+                name: routineDraft.name.trim(),
+                enabled: routineDraft.enabled,
+                isBuiltIn: routineDraft.isBuiltIn,
+                exercises: existing?.exercises ?? [],
+              })
+              setEditingRoutineId(id)
+              setRoutineDraft(null)
+            }}
+            onCancelRoutine={() => {
+              setRoutineDraft(null)
+              setEditingRoutineId(null)
+            }}
+            onAddExerciseToRoutine={(routineId, exerciseId) =>
+              app.addExerciseToRoutine(routineId, exerciseId)
+            }
+            onRemoveRoutineExercise={(routineId, index) =>
+              app.removeRoutineExercise(routineId, index)
+            }
+            onMoveRoutineExercise={(routineId, index, direction) =>
+              app.moveRoutineExercise(routineId, index, direction)
+            }
+            onUpdateRoutineExercise={(routineId, index, update) =>
+              app.updateRoutineExercise(routineId, index, update)
+            }
           />
         )}
       </main>
@@ -723,7 +788,7 @@ function StrengthTab(props: StrengthTabProps) {
   return (
     <div className="page-grid">
       <Card className="card-compact">
-        <SectionHeader title="Routine" subtitle="A/B switcher" />
+        <SectionHeader title="Routine" />
 
         <div className="chip-row" role="group" aria-label="Strength routine">
           {props.routines.map((routine) => (
@@ -733,7 +798,7 @@ function StrengthTab(props: StrengthTabProps) {
               className={`chip${props.selectedRoutineId === routine.id ? ' is-active' : ''}`}
               onClick={() => props.onSelectRoutine(routine.id)}
             >
-              {routine.title}
+              {routine.name}
             </button>
           ))}
         </div>
@@ -741,7 +806,7 @@ function StrengthTab(props: StrengthTabProps) {
 
       <Card className="card-tight">
         <SectionHeader
-          title={selectedRoutine.title}
+          title={selectedRoutine.name}
           subtitle={`${selectedRoutine.exercises.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length} of ${selectedRoutine.exercises.length} complete today`}
         />
 
@@ -780,8 +845,11 @@ interface LibraryTabProps {
   section: LibrarySection
   habits: HabitDefinition[]
   exercises: ExerciseDefinition[]
+  routines: StrengthRoutine[]
   habitDraft: HabitDraft | null
   exerciseDraft: ExerciseDraft | null
+  routineDraft: RoutineDraft | null
+  editingRoutineId: string | null
   onSelectSection: (section: LibrarySection) => void
   onAddHabit: () => void
   onEditHabit: (habit: HabitDefinition) => void
@@ -793,16 +861,26 @@ interface LibraryTabProps {
   onExerciseDraftChange: (update: Partial<ExerciseDraft>) => void
   onSaveExercise: () => void
   onCancelExercise: () => void
+  onAddRoutine: () => void
+  onEditRoutine: (routine: StrengthRoutine) => void
+  onRoutineDraftChange: (update: Partial<RoutineDraft>) => void
+  onSaveRoutine: () => void
+  onCancelRoutine: () => void
+  onAddExerciseToRoutine: (routineId: string, exerciseId: string) => void
+  onRemoveRoutineExercise: (routineId: string, index: number) => void
+  onMoveRoutineExercise: (routineId: string, index: number, direction: 'up' | 'down') => void
+  onUpdateRoutineExercise: (
+    routineId: string,
+    index: number,
+    update: Partial<Pick<import('./lib/domain').RoutineExercise, 'customSets' | 'customVolume' | 'customTime'>>,
+  ) => void
 }
 
 function LibraryTab(props: LibraryTabProps) {
   return (
     <div className="page-grid">
       <Card className="card-compact">
-        <SectionHeader
-          title="Library"
-          subtitle="Choose what to track on Today and keep a simple exercise pool for later routine building."
-        />
+        <SectionHeader title="Library" />
 
         <div className="chip-row" role="group" aria-label="Library section">
           <button
@@ -818,6 +896,13 @@ function LibraryTab(props: LibraryTabProps) {
             onClick={() => props.onSelectSection('exercises')}
           >
             Exercises
+          </button>
+          <button
+            type="button"
+            className={`chip${props.section === 'routines' ? ' is-active' : ''}`}
+            onClick={() => props.onSelectSection('routines')}
+          >
+            Routines
           </button>
         </div>
       </Card>
@@ -930,6 +1015,22 @@ function LibraryTab(props: LibraryTabProps) {
             )}
           </Card>
         </>
+      ) : props.section === 'routines' ? (
+        <RoutinesSection
+          routines={props.routines}
+          exercises={props.exercises}
+          routineDraft={props.routineDraft}
+          editingRoutineId={props.editingRoutineId}
+          onAddRoutine={props.onAddRoutine}
+          onEditRoutine={props.onEditRoutine}
+          onRoutineDraftChange={props.onRoutineDraftChange}
+          onSaveRoutine={props.onSaveRoutine}
+          onCancelRoutine={props.onCancelRoutine}
+          onAddExerciseToRoutine={props.onAddExerciseToRoutine}
+          onRemoveRoutineExercise={props.onRemoveRoutineExercise}
+          onMoveRoutineExercise={props.onMoveRoutineExercise}
+          onUpdateRoutineExercise={props.onUpdateRoutineExercise}
+        />
       ) : (
         <>
           <Card>
@@ -1084,6 +1185,263 @@ function LibraryTab(props: LibraryTabProps) {
   )
 }
 
+// ─── Routine Builder ────────────────────────────────────────────────────────
+
+interface RoutinesSectionProps {
+  routines: StrengthRoutine[]
+  exercises: ExerciseDefinition[]
+  routineDraft: RoutineDraft | null
+  editingRoutineId: string | null
+  onAddRoutine: () => void
+  onEditRoutine: (routine: StrengthRoutine) => void
+  onRoutineDraftChange: (update: Partial<RoutineDraft>) => void
+  onSaveRoutine: () => void
+  onCancelRoutine: () => void
+  onAddExerciseToRoutine: (routineId: string, exerciseId: string) => void
+  onRemoveRoutineExercise: (routineId: string, index: number) => void
+  onMoveRoutineExercise: (routineId: string, index: number, direction: 'up' | 'down') => void
+  onUpdateRoutineExercise: (
+    routineId: string,
+    index: number,
+    update: Partial<Pick<import('./lib/domain').RoutineExercise, 'customSets' | 'customVolume' | 'customTime'>>,
+  ) => void
+}
+
+function RoutinesSection(props: RoutinesSectionProps) {
+  const editingRoutine = props.editingRoutineId
+    ? props.routines.find((r) => r.id === props.editingRoutineId) ?? null
+    : null
+
+  const [addExerciseId, setAddExerciseId] = useState('')
+
+  const availableExercises = props.exercises.filter((e) => e.enabled)
+
+  function handleAddExercise(routineId: string) {
+    const id = addExerciseId || availableExercises[0]?.id
+    if (!id) return
+    props.onAddExerciseToRoutine(routineId, id)
+    setAddExerciseId('')
+  }
+
+  return (
+    <>
+      <Card>
+        <SectionHeader
+          title="Routine library"
+          subtitle="Create and manage routines. Routines appear in the Strength tab."
+        />
+
+        <div className="library-toolbar">
+          <button className="primary-button" type="button" onClick={props.onAddRoutine}>
+            New routine
+          </button>
+        </div>
+
+        {props.routines.length === 0 ? (
+          <EmptyState text="No routines yet." />
+        ) : (
+          <div className="library-list">
+            {props.routines.map((routine) => (
+              <button
+                key={routine.id}
+                type="button"
+                className={`library-row${props.editingRoutineId === routine.id ? ' is-editing' : ''}`}
+                onClick={() => props.onEditRoutine(routine)}
+              >
+                <div>
+                  <strong>{routine.name}</strong>
+                  <p>{routine.exercises.length} exercise{routine.exercises.length === 1 ? '' : 's'}</p>
+                </div>
+                <div className="badge-row">
+                  {routine.isBuiltIn && <span className="badge">Built-in</span>}
+                  <span className={`badge${routine.enabled ? ' is-on' : ''}`}>
+                    {routine.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {props.routineDraft && (
+        <Card>
+          <SectionHeader
+            title={props.routineDraft.id ? 'Edit routine' : 'New routine'}
+          />
+
+          <div className="form-grid">
+            <label className="field-card field-card-wide">
+              <span>Routine name</span>
+              <input
+                type="text"
+                value={props.routineDraft.name}
+                placeholder="e.g. Morning mobility"
+                disabled={props.routineDraft.isBuiltIn}
+                onChange={(e) => props.onRoutineDraftChange({ name: e.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="inline-toggle-grid" style={{ marginTop: 10 }}>
+            <ToggleRow
+              label="Enabled"
+              isEnabled={props.routineDraft.enabled}
+              onToggle={(v) => props.onRoutineDraftChange({ enabled: v })}
+            />
+          </div>
+
+          <div className="action-row">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={props.onSaveRoutine}
+              disabled={!props.routineDraft.name.trim()}
+            >
+              Save routine
+            </button>
+            <button className="secondary-button" type="button" onClick={props.onCancelRoutine}>
+              Cancel
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {editingRoutine && (
+        <Card>
+          <SectionHeader
+            title={editingRoutine.name}
+            subtitle="Add and reorder exercises for this routine."
+          />
+
+          {editingRoutine.exercises.length === 0 ? (
+            <EmptyState text="No exercises yet. Add one below." />
+          ) : (
+            <div className="routine-exercise-list">
+              {editingRoutine.exercises.map((re, index) => {
+                const def = props.exercises.find((e) => e.id === re.exerciseId)
+                return (
+                  <div key={`${re.exerciseId}-${index}`} className="routine-exercise-row">
+                    <div className="routine-exercise-move">
+                      <button
+                        type="button"
+                        className="routine-move-btn"
+                        onClick={() => props.onMoveRoutineExercise(editingRoutine.id, index, 'up')}
+                        disabled={index === 0}
+                        aria-label="Move up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="routine-move-btn"
+                        onClick={() => props.onMoveRoutineExercise(editingRoutine.id, index, 'down')}
+                        disabled={index === editingRoutine.exercises.length - 1}
+                        aria-label="Move down"
+                      >
+                        ↓
+                      </button>
+                    </div>
+
+                    <div className="routine-exercise-body">
+                      <strong>{def?.name ?? re.exerciseId}</strong>
+                      {def && <span className="routine-exercise-meta">{def.category}</span>}
+
+                      <details className="routine-exercise-overrides">
+                        <summary>Override</summary>
+                        <div className="routine-override-grid">
+                          <label className="field-card">
+                            <span>Sets</span>
+                            <input
+                              type="text"
+                              placeholder={def?.suggestedSets ?? ''}
+                              value={re.customSets ?? ''}
+                              onChange={(e) =>
+                                props.onUpdateRoutineExercise(editingRoutine.id, index, {
+                                  customSets: e.target.value || undefined,
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="field-card">
+                            <span>Reps / volume</span>
+                            <input
+                              type="text"
+                              placeholder={def?.suggestedVolume ?? ''}
+                              value={re.customVolume ?? ''}
+                              onChange={(e) =>
+                                props.onUpdateRoutineExercise(editingRoutine.id, index, {
+                                  customVolume: e.target.value || undefined,
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="field-card">
+                            <span>Time</span>
+                            <input
+                              type="text"
+                              placeholder={def?.estimatedTime ?? ''}
+                              value={re.customTime ?? ''}
+                              onChange={(e) =>
+                                props.onUpdateRoutineExercise(editingRoutine.id, index, {
+                                  customTime: e.target.value || undefined,
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
+                      </details>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="routine-remove-btn"
+                      onClick={() => props.onRemoveRoutineExercise(editingRoutine.id, index)}
+                      aria-label="Remove exercise"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {availableExercises.length > 0 && (
+            <div className="routine-add-row">
+              <select
+                className="routine-add-select"
+                value={addExerciseId}
+                onChange={(e) => setAddExerciseId(e.target.value)}
+                aria-label="Select exercise to add"
+              >
+                {availableExercises.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleAddExercise(editingRoutine.id)}
+              >
+                Add
+              </button>
+            </div>
+          )}
+
+          {availableExercises.length === 0 && (
+            <EmptyState text="Enable exercises in the Exercises section to add them here." />
+          )}
+        </Card>
+      )}
+    </>
+  )
+}
+
+// ─── Shared UI primitives ────────────────────────────────────────────────────
+
 function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section className={`card ${className}`.trim()}>{children}</section>
 }
@@ -1236,9 +1594,9 @@ function tabNote(tab: TabKey) {
     case 'history':
       return 'Selected-day review plus quiet week and month summaries.'
     case 'strength':
-      return 'Gentle A/B routines with compact exercise cards.'
+      return 'Gentle routines with compact exercise cards.'
     case 'library':
-      return 'Choose which habits to track and keep a simple exercise pool for later.'
+      return 'Manage habits, exercises, and custom routines.'
   }
 }
 

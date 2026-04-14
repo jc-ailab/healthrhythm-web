@@ -18,6 +18,9 @@ import {
   type HabitDefinition,
   type HabitId,
   type HistorySummary,
+  type RoutineExercise,
+  type StrengthRoutine,
+  type ResolvedRoutineExercise,
   type ResolvedStrengthRoutine,
   type RhythmEntry,
   type TabKey,
@@ -38,9 +41,14 @@ import { BreathCuePlayer, WebMetronome } from './webAudio'
 
 const STORAGE_KEY = 'health-rhythm-web-v2'
 
-type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab'> & {
-  version?: 1
+type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'strength'> & {
+  version?: 1 | 2
   selectedTab?: Exclude<TabKey, 'library'>
+  strength: {
+    completedExerciseIds: string[]
+    lastUpdatedAt: string | null
+    routines?: StrengthRoutine[]
+  }
 }
 
 interface HistoryDailySummary {
@@ -69,6 +77,15 @@ interface AppActions {
   toggleStrengthExercise: (exerciseId: string) => void
   saveHabit: (habit: HabitDefinition) => void
   saveExercise: (exercise: ExerciseDefinition) => void
+  saveStrengthRoutine: (routine: StrengthRoutine) => void
+  addExerciseToRoutine: (routineId: string, exerciseId: string) => void
+  removeRoutineExercise: (routineId: string, index: number) => void
+  moveRoutineExercise: (routineId: string, index: number, direction: 'up' | 'down') => void
+  updateRoutineExercise: (
+    routineId: string,
+    index: number,
+    update: Partial<Pick<RoutineExercise, 'customSets' | 'customVolume' | 'customTime'>>,
+  ) => void
 }
 
 export interface HealthRhythmViewModel extends AppActions {
@@ -76,6 +93,7 @@ export interface HealthRhythmViewModel extends AppActions {
   visibleTodayHabits: HabitDefinition[]
   habitLibrary: HabitDefinition[]
   exerciseLibrary: ExerciseDefinition[]
+  strengthRoutineLibrary: StrengthRoutine[]
   strengthRoutines: ResolvedStrengthRoutine[]
   rhythmRemainingSeconds: number
   rhythmTotalMinutesToday: number
@@ -353,11 +371,110 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         })
       })
     },
+    saveStrengthRoutine(routine) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        const routines = upsertById(next.strength.routines, sanitizeRoutine(routine))
+
+        return syncHistory({
+          ...next,
+          strength: {
+            ...next.strength,
+            routines,
+          },
+        })
+      })
+    },
+    addExerciseToRoutine(routineId, exerciseId) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        return syncHistory({
+          ...next,
+          strength: {
+            ...next.strength,
+            routines: next.strength.routines.map((routine) =>
+              routine.id === routineId
+                ? {
+                    ...routine,
+                    exercises: [...routine.exercises, { exerciseId }],
+                  }
+                : routine,
+            ),
+          },
+        })
+      })
+    },
+    removeRoutineExercise(routineId, index) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        return syncHistory({
+          ...next,
+          strength: {
+            ...next.strength,
+            routines: next.strength.routines.map((routine) =>
+              routine.id === routineId
+                ? {
+                    ...routine,
+                    exercises: routine.exercises.filter((_, exerciseIndex) => exerciseIndex !== index),
+                  }
+                : routine,
+            ),
+          },
+        })
+      })
+    },
+    moveRoutineExercise(routineId, index, direction) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        return syncHistory({
+          ...next,
+          strength: {
+            ...next.strength,
+            routines: next.strength.routines.map((routine) => {
+              if (routine.id !== routineId) {
+                return routine
+              }
+
+              const nextIndex = direction === 'up' ? index - 1 : index + 1
+              if (nextIndex < 0 || nextIndex >= routine.exercises.length) {
+                return routine
+              }
+
+              const exercises = [...routine.exercises]
+              const [moved] = exercises.splice(index, 1)
+              exercises.splice(nextIndex, 0, moved)
+              return { ...routine, exercises }
+            }),
+          },
+        })
+      })
+    },
+    updateRoutineExercise(routineId, index, update) {
+      setState((current) => {
+        const next = ensureCurrentDay(current, new Date())
+        return syncHistory({
+          ...next,
+          strength: {
+            ...next.strength,
+            routines: next.strength.routines.map((routine) =>
+              routine.id === routineId
+                ? {
+                    ...routine,
+                    exercises: routine.exercises.map((exercise, exerciseIndex) =>
+                      exerciseIndex === index ? sanitizeRoutineExercise({ ...exercise, ...update }) : exercise,
+                    ),
+                  }
+                : routine,
+            ),
+          },
+        })
+      })
+    },
   }
 
   const derived = useMemo(() => {
     const visibleTodayHabits = nextVisibleTodayHabits(state.library.habits)
-    const strengthRoutines = resolveStrengthRoutines(state.library.exercises)
+    const strengthRoutines = resolveStrengthRoutines(state.library.exercises, state.strength.routines)
     const historyWeekSummary = buildHistorySummary(state.history, currentIntervalDayKeys('week', new Date()))
     const historyMonthSummary = buildHistorySummary(
       state.history,
@@ -392,6 +509,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     visibleTodayHabits: derived.visibleTodayHabits,
     habitLibrary: state.library.habits,
     exerciseLibrary: state.library.exercises,
+    strengthRoutineLibrary: state.strength.routines,
     strengthRoutines: derived.strengthRoutines,
     historyDailySummary: (dayKey) =>
       buildDailyHistorySummary(recordForDay(state.history, dayKey), derived.strengthRoutines),
@@ -424,10 +542,14 @@ function loadState(): AppState {
 }
 
 function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState {
-  if ((rawState as AppState).version === 2 && (rawState as AppState).library) {
+  if ((rawState as AppState).version === 3 && (rawState as AppState).library) {
     const state = rawState as AppState
     return {
       ...state,
+      strength: {
+        ...state.strength,
+        routines: mergeBuiltInRoutines(state.strength.routines),
+      },
       library: {
         habits: mergeBuiltInHabits(state.library.habits),
         exercises: mergeBuiltInExercises(state.library.exercises),
@@ -443,7 +565,11 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     rhythm: legacy.rhythm,
     breath: legacy.breath,
     today: legacy.today,
-    strength: legacy.strength,
+    strength: {
+      completedExerciseIds: legacy.strength.completedExerciseIds,
+      lastUpdatedAt: legacy.strength.lastUpdatedAt,
+      routines: mergeBuiltInRoutines(legacy.strength.routines ?? STRENGTH_ROUTINES),
+    },
     library: {
       habits: createDefaultHabits(),
       exercises: createDefaultExercises(),
@@ -489,6 +615,7 @@ function ensureCurrentDay(state: AppState, now: Date): AppState {
       completionTimesByHabitId: {},
     },
     strength: {
+      ...refreshed.strength,
       completedExerciseIds: [],
       lastUpdatedAt: null,
     },
@@ -887,19 +1014,26 @@ function syncHistory(state: AppState): AppState {
   }
 }
 
-function resolveStrengthRoutines(exercises: ExerciseDefinition[]): ResolvedStrengthRoutine[] {
+function resolveStrengthRoutines(
+  exercises: ExerciseDefinition[],
+  routines: StrengthRoutine[],
+): ResolvedStrengthRoutine[] {
   const byId = new Map(exercises.map((exercise) => [exercise.id, exercise]))
-  return STRENGTH_ROUTINES.map((routine) => ({
+  return routines
+    .filter((routine) => routine.enabled)
+    .map((routine) => ({
     id: routine.id,
-    title: routine.title,
-    exercises: routine.exerciseIds.map((exerciseId) => {
-      const exercise = byId.get(exerciseId)
+    name: routine.name,
+    enabled: routine.enabled,
+    isBuiltIn: routine.isBuiltIn,
+    exercises: routine.exercises.map((routineExercise) => {
+      const exercise = byId.get(routineExercise.exerciseId)
       if (exercise) {
-        return exercise
+        return resolveRoutineExercise(exercise, routineExercise)
       }
 
       return {
-        id: exerciseId,
+        id: routineExercise.exerciseId,
         name: 'Missing exercise',
         category: 'Unavailable',
         description: 'This built-in exercise entry is not currently available in the library.',
@@ -908,6 +1042,12 @@ function resolveStrengthRoutines(exercises: ExerciseDefinition[]): ResolvedStren
         suggestedSets: '',
         estimatedTime: '',
         enabled: false,
+        customSets: routineExercise.customSets,
+        customVolume: routineExercise.customVolume,
+        customTime: routineExercise.customTime,
+        displaySets: routineExercise.customSets ?? '',
+        displayVolume: routineExercise.customVolume ?? '',
+        displayTime: routineExercise.customTime ?? '',
       }
     }),
   }))
@@ -1114,6 +1254,16 @@ function mergeBuiltInExercises(existingExercises: ExerciseDefinition[]) {
   return Array.from(byId.values())
 }
 
+function mergeBuiltInRoutines(existingRoutines: StrengthRoutine[]) {
+  const byId = new Map(existingRoutines.map((routine) => [routine.id, sanitizeRoutine(routine)]))
+  for (const routine of STRENGTH_ROUTINES) {
+    if (!byId.has(routine.id)) {
+      byId.set(routine.id, routine)
+    }
+  }
+  return Array.from(byId.values())
+}
+
 function upsertById<T extends { id: string }>(items: T[], item: T) {
   const existingIndex = items.findIndex((current) => current.id === item.id)
   if (existingIndex === -1) {
@@ -1145,5 +1295,38 @@ function sanitizeExercise(exercise: ExerciseDefinition): ExerciseDefinition {
     suggestedVolume: exercise.suggestedVolume.trim(),
     suggestedSets: exercise.suggestedSets.trim(),
     estimatedTime: exercise.estimatedTime.trim(),
+  }
+}
+
+function sanitizeRoutine(routine: StrengthRoutine): StrengthRoutine {
+  return {
+    ...routine,
+    id: routine.id || makeLocalId('routine'),
+    name: routine.name.trim() || 'Untitled routine',
+    exercises: routine.exercises.map((exercise) => sanitizeRoutineExercise(exercise)),
+  }
+}
+
+function sanitizeRoutineExercise(exercise: RoutineExercise): RoutineExercise {
+  return {
+    exerciseId: exercise.exerciseId,
+    customSets: exercise.customSets?.trim() || undefined,
+    customVolume: exercise.customVolume?.trim() || undefined,
+    customTime: exercise.customTime?.trim() || undefined,
+  }
+}
+
+function resolveRoutineExercise(
+  exercise: ExerciseDefinition,
+  routineExercise: RoutineExercise,
+): ResolvedRoutineExercise {
+  return {
+    ...exercise,
+    customSets: routineExercise.customSets,
+    customVolume: routineExercise.customVolume,
+    customTime: routineExercise.customTime,
+    displaySets: routineExercise.customSets ?? exercise.suggestedSets,
+    displayVolume: routineExercise.customVolume ?? exercise.suggestedVolume,
+    displayTime: routineExercise.customTime ?? exercise.estimatedTime,
   }
 }

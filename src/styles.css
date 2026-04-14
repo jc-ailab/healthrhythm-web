@@ -652,3 +652,143 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ─── Routine Builder ──────────────────────────────────────────────────────── */
+
+.library-row.is-editing {
+  background: #eef4ef;
+  border-color: rgba(94, 129, 106, 0.32);
+}
+
+.routine-exercise-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.routine-exercise-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(96, 117, 103, 0.16);
+  background: #faf8f2;
+}
+
+.routine-exercise-move {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.routine-move-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(96, 117, 103, 0.2);
+  background: #f0f2ea;
+  color: #314236;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.routine-move-btn:disabled {
+  opacity: 0.32;
+}
+
+.routine-exercise-body {
+  flex: 1 1 0;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.routine-exercise-body strong {
+  color: #24312a;
+  font-size: 0.95rem;
+}
+
+.routine-exercise-meta {
+  color: #6e7c74;
+  font-size: 0.82rem;
+}
+
+.routine-remove-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 100, 90, 0.22);
+  background: #fdf1ef;
+  color: #8c3b30;
+  font-size: 0.85rem;
+}
+
+.routine-exercise-overrides {
+  margin-top: 6px;
+}
+
+.routine-exercise-overrides > summary {
+  cursor: pointer;
+  color: #3d5a49;
+  font-size: 0.85rem;
+  font-weight: 600;
+  list-style: none;
+}
+
+.routine-exercise-overrides > summary::-webkit-details-marker {
+  display: none;
+}
+
+.routine-override-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.routine-override-grid .field-card input {
+  min-height: 38px;
+  font-size: 0.88rem;
+}
+
+.routine-override-grid .field-card span {
+  font-size: 0.78rem;
+}
+
+.routine-add-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.routine-add-select {
+  flex: 1 1 0;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(96, 117, 103, 0.18);
+  background: white;
+  color: #314236;
+  font-size: 0.92rem;
+}
+
+.routine-add-row .secondary-button {
+  flex: 0 0 auto;
+  min-width: 72px;
+}
+
+@media (max-width: 480px) {
+  .routine-override-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
