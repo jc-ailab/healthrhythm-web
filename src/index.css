@@ -1,0 +1,39 @@
+:root {
+  font-family:
+    "SF Pro Text",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  line-height: 1.45;
+  font-weight: 400;
+  color: #24312a;
+  background:
+    radial-gradient(circle at top, rgba(177, 214, 196, 0.22), transparent 32%),
+    linear-gradient(180deg, #f5f1ea 0%, #f8f7f2 46%, #f4f3ec 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
