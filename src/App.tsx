@@ -117,11 +117,6 @@ function App() {
             onToggleStartPause={app.toggleRhythm}
             onEnd={app.endRhythm}
             onSoundToggle={app.setRhythmSoundEnabled}
-            breathSessions={app.breathTotalSessionsToday}
-            breathRounds={app.breathTotalRoundsToday}
-            strengthSummary={app.strengthSummaryToday}
-            habitCompletionCount={Object.keys(app.state.today.completionTimesByHabitId).length}
-            habitCount={app.visibleTodayHabits.length}
           />
         )}
 
@@ -145,10 +140,6 @@ function App() {
             onToggleStartPause={app.toggleBreath}
             onEnd={app.endBreath}
             onSoundToggle={app.setBreathSoundEnabled}
-            rhythmTotalMinutes={app.rhythmTotalMinutesToday}
-            strengthSummary={app.strengthSummaryToday}
-            habitCompletionCount={Object.keys(app.state.today.completionTimesByHabitId).length}
-            habitCount={app.visibleTodayHabits.length}
           />
         )}
 
@@ -394,11 +385,6 @@ interface RhythmTabProps {
   isSoundEnabled: boolean
   entriesToday: { id: string; startAt: string; durationSeconds: number }[]
   totalMinutesToday: number
-  breathSessions: number
-  breathRounds: number
-  strengthSummary: string
-  habitCompletionCount: number
-  habitCount: number
   onSelectDuration: (minutes: number) => void
   onToggleStartPause: () => void
   onEnd: () => void
@@ -461,18 +447,11 @@ function RhythmTab(props: RhythmTabProps) {
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader title="Today" />
-        <TodaySummaryCompact
-          rhythmTotalMinutes={props.totalMinutesToday}
-          breathSessions={props.breathSessions}
-          breathRounds={props.breathRounds}
-          strengthSummary={props.strengthSummary}
-          habitCompletionCount={props.habitCompletionCount}
-          habitCount={props.habitCount}
-        />
-        {props.entriesToday.length > 0 && (
-          <div className="event-stream activity-log">
-            <p className="activity-log-label">Today activity</p>
+        <SectionHeader title="Today activity" />
+        {props.entriesToday.length === 0 ? (
+          <EmptyState text="No rhythm sessions yet today." />
+        ) : (
+          <div className="event-stream">
             {props.entriesToday.map((entry) => (
               <div key={entry.id} className="event-row">
                 <span className="event-time">{formatClockTime(entry.startAt)}</span>
@@ -499,10 +478,6 @@ interface BreathTabProps {
   completedRounds: number
   totalRoundsToday: number
   totalSessionsToday: number
-  rhythmTotalMinutes: number
-  strengthSummary: string
-  habitCompletionCount: number
-  habitCount: number
   status: string
   isSoundEnabled: boolean
   entriesToday: {
@@ -615,18 +590,11 @@ function BreathTab(props: BreathTabProps) {
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader title="Today" />
-        <TodaySummaryCompact
-          rhythmTotalMinutes={props.rhythmTotalMinutes}
-          breathSessions={props.totalSessionsToday}
-          breathRounds={props.totalRoundsToday}
-          strengthSummary={props.strengthSummary}
-          habitCompletionCount={props.habitCompletionCount}
-          habitCount={props.habitCount}
-        />
-        {props.entriesToday.length > 0 && (
-          <div className="event-stream activity-log">
-            <p className="activity-log-label">Today activity</p>
+        <SectionHeader title="Today activity" />
+        {props.entriesToday.length === 0 ? (
+          <EmptyState text="No breath sessions yet today." />
+        ) : (
+          <div className="event-stream">
             {props.entriesToday.map((entry) => (
               <div key={entry.id} className="event-row">
                 <span className="event-time">{formatClockTime(entry.startAt)}</span>
