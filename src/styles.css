@@ -792,3 +792,149 @@
   }
 }
 
+/* ─── Today Summary Strip (shared) ─────────────────────────────────────────── */
+
+.today-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.today-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: #f3f4ee;
+}
+
+.today-summary-item span {
+  display: block;
+  color: #6e7c74;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.today-summary-item strong {
+  color: #24312a;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+@media (max-width: 360px) {
+  .today-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ─── Timeline: compact event stream ───────────────────────────────────────── */
+
+.event-stream {
+  display: grid;
+  gap: 0;
+}
+
+.event-row {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 2px;
+  border-bottom: 1px solid rgba(96, 117, 103, 0.1);
+}
+
+.event-row:last-child {
+  border-bottom: none;
+}
+
+.event-time {
+  color: #6e7c74;
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.event-title {
+  color: #24312a;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.event-summary {
+  color: #4f5f57;
+  font-size: 0.84rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.activity-log {
+  margin-top: 10px;
+  border-top: 1px solid rgba(96, 117, 103, 0.1);
+  padding-top: 4px;
+}
+
+.activity-log-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8a9990;
+  padding: 4px 2px 2px;
+}
+
+/* ─── Strength: exercise-grid (2-col tappable tiles) ───────────────────────── */
+
+.exercise-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.exercise-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(96, 117, 103, 0.18);
+  background: #faf8f2;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 80ms ease;
+}
+
+.exercise-tile:active {
+  transform: scale(0.97);
+}
+
+.exercise-tile strong {
+  color: #24312a;
+  font-size: 0.88rem;
+  line-height: 1.3;
+}
+
+.exercise-tile span {
+  color: #4f5f57;
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.exercise-tile small {
+  display: none;
+}
+
+.exercise-tile.is-complete {
+  background: #eef4ef;
+  border-color: rgba(94, 129, 106, 0.32);
+}
+
+.exercise-tile.is-complete strong {
+  color: #2d5a3e;
+}
+

@@ -9,7 +9,6 @@ import {
   RHYTHM_DURATIONS,
   formatClockTime,
   formatCountdown,
-  formatDurationMinutes,
   formatFullDate,
   makeLocalId,
   type BreathMode,
@@ -118,6 +117,11 @@ function App() {
             onToggleStartPause={app.toggleRhythm}
             onEnd={app.endRhythm}
             onSoundToggle={app.setRhythmSoundEnabled}
+            breathSessions={app.breathTotalSessionsToday}
+            breathRounds={app.breathTotalRoundsToday}
+            strengthSummary={app.strengthSummaryToday}
+            habitCompletionCount={Object.keys(app.state.today.completionTimesByHabitId).length}
+            habitCount={app.visibleTodayHabits.length}
           />
         )}
 
@@ -141,6 +145,10 @@ function App() {
             onToggleStartPause={app.toggleBreath}
             onEnd={app.endBreath}
             onSoundToggle={app.setBreathSoundEnabled}
+            rhythmTotalMinutes={app.rhythmTotalMinutesToday}
+            strengthSummary={app.strengthSummaryToday}
+            habitCompletionCount={Object.keys(app.state.today.completionTimesByHabitId).length}
+            habitCount={app.visibleTodayHabits.length}
           />
         )}
 
@@ -341,6 +349,42 @@ function App() {
   )
 }
 
+// ─── Shared: Today Summary Strip ────────────────────────────────────────────
+
+interface TodaySummaryCompactProps {
+  rhythmTotalMinutes: number
+  breathSessions: number
+  breathRounds: number
+  strengthSummary: string
+  habitCompletionCount: number
+  habitCount: number
+}
+
+function TodaySummaryCompact(props: TodaySummaryCompactProps) {
+  return (
+    <div className="today-summary-strip">
+      <div className="today-summary-item">
+        <span>Rhythm</span>
+        <strong>{props.rhythmTotalMinutes} min</strong>
+      </div>
+      <div className="today-summary-item">
+        <span>Breath</span>
+        <strong>{props.breathSessions > 0 ? `${props.breathRounds} rds` : '—'}</strong>
+      </div>
+      <div className="today-summary-item">
+        <span>Strength</span>
+        <strong>{props.strengthSummary || '—'}</strong>
+      </div>
+      <div className="today-summary-item">
+        <span>Habits</span>
+        <strong>{props.habitCount > 0 ? `${props.habitCompletionCount}/${props.habitCount}` : '—'}</strong>
+      </div>
+    </div>
+  )
+}
+
+// ─── Rhythm Tab ──────────────────────────────────────────────────────────────
+
 interface RhythmTabProps {
   bpm: number
   selectedDuration: number
@@ -350,6 +394,11 @@ interface RhythmTabProps {
   isSoundEnabled: boolean
   entriesToday: { id: string; startAt: string; durationSeconds: number }[]
   totalMinutesToday: number
+  breathSessions: number
+  breathRounds: number
+  strengthSummary: string
+  habitCompletionCount: number
+  habitCount: number
   onSelectDuration: (minutes: number) => void
   onToggleStartPause: () => void
   onEnd: () => void
@@ -412,27 +461,24 @@ function RhythmTab(props: RhythmTabProps) {
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader
-          title="Today"
-          subtitle={`${props.totalMinutesToday} min across ${props.entriesToday.length} entr${props.entriesToday.length === 1 ? 'y' : 'ies'}.`}
+        <SectionHeader title="Today" />
+        <TodaySummaryCompact
+          rhythmTotalMinutes={props.totalMinutesToday}
+          breathSessions={props.breathSessions}
+          breathRounds={props.breathRounds}
+          strengthSummary={props.strengthSummary}
+          habitCompletionCount={props.habitCompletionCount}
+          habitCount={props.habitCount}
         />
-
-        {props.entriesToday.length === 0 ? (
-          <EmptyState text="No rhythm time saved yet today." />
-        ) : (
-          <div className="stack-list">
+        {props.entriesToday.length > 0 && (
+          <div className="event-stream activity-log">
+            <p className="activity-log-label">Today activity</p>
             {props.entriesToday.map((entry) => (
-              <details key={entry.id} className="timeline-row">
-                <summary>
-                  <span>{formatClockTime(entry.startAt)}</span>
-                  <span>Rhythm</span>
-                  <span>{Math.max(1, Math.floor(entry.durationSeconds / 60))} min</span>
-                </summary>
-                <p>
-                  Started at {formatClockTime(entry.startAt)} and logged{' '}
-                  {formatDurationMinutes(entry.durationSeconds)}.
-                </p>
-              </details>
+              <div key={entry.id} className="event-row">
+                <span className="event-time">{formatClockTime(entry.startAt)}</span>
+                <span className="event-title">Rhythm</span>
+                <span className="event-summary">{Math.max(1, Math.floor(entry.durationSeconds / 60))} min</span>
+              </div>
             ))}
           </div>
         )}
@@ -440,6 +486,8 @@ function RhythmTab(props: RhythmTabProps) {
     </div>
   )
 }
+
+// ─── Breath Tab ──────────────────────────────────────────────────────────────
 
 interface BreathTabProps {
   selectedMode: BreathMode
@@ -451,6 +499,10 @@ interface BreathTabProps {
   completedRounds: number
   totalRoundsToday: number
   totalSessionsToday: number
+  rhythmTotalMinutes: number
+  strengthSummary: string
+  habitCompletionCount: number
+  habitCount: number
   status: string
   isSoundEnabled: boolean
   entriesToday: {
@@ -473,8 +525,6 @@ function BreathTab(props: BreathTabProps) {
   return (
     <div className="page-grid">
       <Card className="card-tight">
-        <SectionHeader title="Breath practice" />
-
         <div className="chip-row is-single-line chip-row-breath-mode" role="group" aria-label="Breath mode">
           {(Object.entries(BREATH_MODE_LABELS) as [BreathMode, string][]).map(([mode, label]) => (
             <button
@@ -542,7 +592,7 @@ function BreathTab(props: BreathTabProps) {
               onClick={() => props.onSelectRounds(rounds)}
               disabled={props.status === 'running' || props.status === 'paused'}
             >
-              {rounds} rounds
+              {rounds} rds
             </button>
           ))}
         </div>
@@ -565,28 +615,24 @@ function BreathTab(props: BreathTabProps) {
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader
-          title="Today"
-          subtitle={`${props.totalSessionsToday} session${props.totalSessionsToday === 1 ? '' : 's'} · ${props.totalRoundsToday} rounds`}
+        <SectionHeader title="Today" />
+        <TodaySummaryCompact
+          rhythmTotalMinutes={props.rhythmTotalMinutes}
+          breathSessions={props.totalSessionsToday}
+          breathRounds={props.totalRoundsToday}
+          strengthSummary={props.strengthSummary}
+          habitCompletionCount={props.habitCompletionCount}
+          habitCount={props.habitCount}
         />
-
-        {props.entriesToday.length === 0 ? (
-          <EmptyState text="No breath sessions saved yet today." />
-        ) : (
-          <div className="stack-list">
+        {props.entriesToday.length > 0 && (
+          <div className="event-stream activity-log">
+            <p className="activity-log-label">Today activity</p>
             {props.entriesToday.map((entry) => (
-              <details key={entry.id} className="timeline-row">
-                <summary>
-                  <span>{formatClockTime(entry.startAt)}</span>
-                  <span>Breath</span>
-                  <span>{entry.completedRounds} rounds</span>
-                </summary>
-                <p>
-                  {BREATH_MODE_LABELS[entry.mode]} pattern {entry.pattern.inhale}-{entry.pattern.hold}-
-                  {entry.pattern.exhale}-{entry.pattern.endHold} ·{' '}
-                  {formatDurationMinutes(entry.totalDurationSeconds)}.
-                </p>
-              </details>
+              <div key={entry.id} className="event-row">
+                <span className="event-time">{formatClockTime(entry.startAt)}</span>
+                <span className="event-title">Breath</span>
+                <span className="event-summary">{entry.completedRounds} rds</span>
+              </div>
             ))}
           </div>
         )}
@@ -643,31 +689,29 @@ function TodayTab(props: TodayTabProps) {
 
       <Card className="card-compact">
         <SectionHeader title="Day at a glance" subtitle={props.currentDayLabel} />
-
-        <div className="summary-grid summary-grid-compact summary-grid-today">
-          <SummaryMetric title="Rhythm" value={`${props.rhythmTotalMinutes}`} suffix="min" />
-          <SummaryMetric title="Breath" value={`${props.breathSessions}`} suffix="sessions" />
-          <SummaryMetric title="Strength" value={props.strengthSummary} />
-          <SummaryMetric title="Habits" value={`${props.habitCompletionCount}/${props.habits.length}`} />
-        </div>
+        <TodaySummaryCompact
+          rhythmTotalMinutes={props.rhythmTotalMinutes}
+          breathSessions={props.breathSessions}
+          breathRounds={props.breathRounds}
+          strengthSummary={props.strengthSummary}
+          habitCompletionCount={props.habitCompletionCount}
+          habitCount={props.habits.length}
+        />
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader title="Daily timeline" subtitle={props.timelineEvents.length === 0 ? undefined : `${props.timelineEvents.length} events`} />
+        <SectionHeader title="Timeline" />
 
         {props.timelineEvents.length === 0 ? (
           <EmptyState text="No activity recorded yet today." />
         ) : (
-          <div className="stack-list">
+          <div className="event-stream">
             {props.timelineEvents.map((event) => (
-              <details key={event.id} className="timeline-row">
-                <summary>
-                  <span>{formatClockTime(event.timestamp)}</span>
-                  <span>{event.title}</span>
-                  <span>{event.summary}</span>
-                </summary>
-                {event.detail && <p>{event.detail}</p>}
-              </details>
+              <div key={event.id} className="event-row">
+                <span className="event-time">{formatClockTime(event.timestamp)}</span>
+                <span className="event-title">{event.title}</span>
+                <span className="event-summary">{event.summary}</span>
+              </div>
             ))}
           </div>
         )}
@@ -807,32 +851,25 @@ function StrengthTab(props: StrengthTabProps) {
       <Card className="card-tight">
         <SectionHeader
           title={selectedRoutine.name}
-          subtitle={`${selectedRoutine.exercises.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length} of ${selectedRoutine.exercises.length} complete today`}
+          subtitle={`${selectedRoutine.exercises.filter((e) => props.completedExerciseIds.has(e.id)).length}/${selectedRoutine.exercises.length} done`}
         />
 
-        <div className="exercise-stack">
+        <div className="exercise-grid">
           {selectedRoutine.exercises.map((exercise) => {
             const isDone = props.completedExerciseIds.has(exercise.id)
             return (
-              <div key={exercise.id} className={`exercise-card${isDone ? ' is-complete' : ''}`}>
-                <div className="exercise-card-header">
-                  <div className="exercise-card-copy">
-                    <strong>{exercise.name}</strong>
-                    <p>{compactExerciseSummary(exercise)}</p>
-                  </div>
-                  <button
-                    className={`chip exercise-toggle${isDone ? ' is-active' : ''}`}
-                    type="button"
-                    onClick={() => props.onToggleExercise(exercise.id)}
-                  >
-                    {isDone ? 'Done' : 'Mark'}
-                  </button>
-                </div>
-                <details className="exercise-detail">
-                  <summary>Form note</summary>
+              <button
+                key={exercise.id}
+                type="button"
+                className={`exercise-tile${isDone ? ' is-complete' : ''}`}
+                onClick={() => props.onToggleExercise(exercise.id)}
+              >
+                <strong>{exercise.name}</strong>
+                <span>{compactExerciseSummary(exercise)}</span>
+                {exercise.caution && (
                   <small>{exercise.caution}</small>
-                </details>
-              </div>
+                )}
+              </button>
             )
           })}
         </div>
@@ -1483,23 +1520,6 @@ function ToggleRow({
   )
 }
 
-function SummaryMetric({
-  title,
-  value,
-  suffix,
-}: {
-  title: string
-  value: string
-  suffix?: string
-}) {
-  return (
-    <div className="summary-metric">
-      <span>{title}</span>
-      <strong>{value}</strong>
-      {suffix && <small>{suffix}</small>}
-    </div>
-  )
-}
 
 function HistoryMetric({ label, value }: { label: string; value: string }) {
   return (
