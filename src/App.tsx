@@ -5,6 +5,7 @@ import {
   BREATH_MODE_LABELS,
   BREATH_PHASE_LABELS,
   BREATH_ROUND_OPTIONS,
+  MULTI_CAPTURE_HABIT_IDS,
   RHYTHM_BPM,
   RHYTHM_DURATIONS,
   formatClockTime,
@@ -90,7 +91,16 @@ function App() {
   const todayHabits = app.visibleTodayHabits.map((habit) => ({
     ...habit,
     completedAt: app.state.today.completionTimesByHabitId[habit.id] ?? null,
+    captureCount: MULTI_CAPTURE_HABIT_IDS.has(habit.id)
+      ? (app.state.today.eventsByHabitId[habit.id]?.length ?? 0)
+      : null,
   }))
+
+  const habitCompletionCount =
+    Object.keys(app.state.today.completionTimesByHabitId).length +
+    Object.entries(app.state.today.eventsByHabitId)
+      .filter(([, events]) => (events?.length ?? 0) > 0)
+      .length
 
   return (
     <div className="app-shell">
@@ -150,7 +160,7 @@ function App() {
             breathSessions={app.breathTotalSessionsToday}
             breathRounds={app.breathTotalRoundsToday}
             strengthSummary={app.strengthSummaryToday}
-            habitCompletionCount={Object.keys(app.state.today.completionTimesByHabitId).length}
+            habitCompletionCount={habitCompletionCount}
             habits={todayHabits}
             timelineEvents={app.todayTimeline}
             onToggleHabit={app.toggleHabit}
@@ -616,7 +626,7 @@ interface TodayTabProps {
   breathRounds: number
   strengthSummary: string
   habitCompletionCount: number
-  habits: (HabitDefinition & { completedAt: string | null })[]
+  habits: (HabitDefinition & { completedAt: string | null; captureCount: number | null })[]
   timelineEvents: TodayTimelineEvent[]
   onToggleHabit: (habitId: string) => void
 }
@@ -637,17 +647,21 @@ function TodayTab(props: TodayTabProps) {
               <section key={category} className="habit-group">
                 <div className="habit-group-label">{category}</div>
                 <div className="habit-chip-row">
-                  {habits.map((habit) => (
-                    <button
-                      key={habit.id}
-                      className={`habit-chip${habit.completedAt ? ' is-complete' : ''}`}
-                      type="button"
-                      onClick={() => props.onToggleHabit(habit.id)}
-                    >
-                      <span>{habit.name}</span>
-                      {habit.completedAt && <small>{formatClockTime(habit.completedAt)}</small>}
-                    </button>
-                  ))}
+                  {habits.map((habit) => {
+                    const isMulti = habit.captureCount !== null
+                    const isDone = isMulti ? (habit.captureCount! > 0) : Boolean(habit.completedAt)
+                    return (
+                      <button
+                        key={habit.id}
+                        className={`habit-chip${isDone ? ' is-complete' : ''}`}
+                        type="button"
+                        onClick={() => props.onToggleHabit(habit.id)}
+                      >
+                        <span>{habit.name}{isMulti && habit.captureCount! > 0 ? ` · ${habit.captureCount}×` : ''}</span>
+                        {!isMulti && habit.completedAt && <small>{formatClockTime(habit.completedAt)}</small>}
+                      </button>
+                    )
+                  })}
                 </div>
               </section>
             ))}
@@ -675,11 +689,16 @@ function TodayTab(props: TodayTabProps) {
         ) : (
           <div className="event-stream">
             {props.timelineEvents.map((event) => (
-              <div key={event.id} className="event-row">
-                <span className="event-time">{formatClockTime(event.timestamp)}</span>
-                <span className="event-title">{event.title}</span>
-                <span className="event-summary">{event.summary}</span>
-              </div>
+              <details key={event.id} className="event-row">
+                <summary className="event-row-summary">
+                  <span className="event-time">{formatClockTime(event.timestamp)}</span>
+                  <span className="event-title">{event.title}</span>
+                  <span className="event-summary">{event.summary}</span>
+                </summary>
+                {event.detail && (
+                  <p className="event-detail">{event.detail}</p>
+                )}
+              </details>
             ))}
           </div>
         )}
@@ -1508,8 +1527,10 @@ function compactExerciseSummary(exercise: {
     .join(' · ')
 }
 
-function groupHabitsByCategory(habits: (HabitDefinition & { completedAt: string | null })[]) {
-  const groups = new Map<string, (HabitDefinition & { completedAt: string | null })[]>()
+type TodayHabit = HabitDefinition & { completedAt: string | null; captureCount: number | null }
+
+function groupHabitsByCategory(habits: TodayHabit[]) {
+  const groups = new Map<string, TodayHabit[]>()
   for (const habit of habits) {
     const key = habit.category || 'General'
     const items = groups.get(key) ?? []
