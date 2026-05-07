@@ -59,6 +59,7 @@ export interface BreathState {
 
 export interface TodayState {
   completionTimesByHabitId: Partial<Record<HabitId, string>>
+  eventsByHabitId: Partial<Record<HabitId, string[]>>
 }
 
 export interface StrengthState {
@@ -187,6 +188,11 @@ export const BUILT_IN_HABIT_IDS = {
   mindfulEating: 'mindfulEating',
   earlySleep: 'earlySleep',
 } as const
+
+/** Habits that accumulate multiple captures per day instead of toggling. */
+export const MULTI_CAPTURE_HABIT_IDS: ReadonlySet<string> = new Set([
+  'mindfulEating',
+])
 
 export function createDefaultHabits(): HabitDefinition[] {
   return [
@@ -505,6 +511,7 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
     },
     today: {
       completionTimesByHabitId: {},
+      eventsByHabitId: {},
     },
     strength: {
       completedExerciseIds: [],

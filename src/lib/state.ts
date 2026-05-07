@@ -4,6 +4,7 @@ import {
   BREATH_MODE_LABELS,
   BREATH_ROUND_OPTIONS,
   BUILT_IN_HABIT_IDS,
+  MULTI_CAPTURE_HABIT_IDS,
   RHYTHM_BPM,
   RHYTHM_DURATIONS,
   RHYTHM_MERGE_THRESHOLD_SECONDS,
@@ -307,17 +308,35 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     toggleHabit(habitId) {
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
-        const completionTimesByHabitId = { ...next.today.completionTimesByHabitId }
+        const now = new Date().toISOString()
 
+        if (MULTI_CAPTURE_HABIT_IDS.has(habitId)) {
+          // Append a new capture timestamp rather than toggling
+          const existing = next.today.eventsByHabitId[habitId] ?? []
+          return syncHistory({
+            ...next,
+            today: {
+              ...next.today,
+              eventsByHabitId: {
+                ...next.today.eventsByHabitId,
+                [habitId]: [...existing, now],
+              },
+            },
+          })
+        }
+
+        // Normal toggle behavior for all other habits
+        const completionTimesByHabitId = { ...next.today.completionTimesByHabitId }
         if (completionTimesByHabitId[habitId]) {
           delete completionTimesByHabitId[habitId]
         } else {
-          completionTimesByHabitId[habitId] = new Date().toISOString()
+          completionTimesByHabitId[habitId] = now
         }
 
         return syncHistory({
           ...next,
           today: {
+            ...next.today,
             completionTimesByHabitId,
           },
         })
@@ -547,6 +566,10 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     const state = rawState as AppState
     return {
       ...state,
+      today: {
+        completionTimesByHabitId: state.today.completionTimesByHabitId,
+        eventsByHabitId: state.today.eventsByHabitId ?? {},
+      },
       strength: {
         ...state.strength,
         routines: mergeBuiltInRoutines(state.strength.routines),
@@ -614,6 +637,7 @@ function ensureCurrentDay(state: AppState, now: Date): AppState {
     }),
     today: {
       completionTimesByHabitId: {},
+      eventsByHabitId: {},
     },
     strength: {
       ...refreshed.strength,
@@ -1093,6 +1117,19 @@ function buildTodayTimeline(
         ]
       : []),
     ...visibleTodayHabits.flatMap((habit) => {
+      // Multi-capture habits: one timeline event per capture
+      if (MULTI_CAPTURE_HABIT_IDS.has(habit.id)) {
+        const events = state.today.eventsByHabitId[habit.id] ?? []
+        return events.map((timestamp, index) => ({
+          id: `habit-${habit.id}-${index}`,
+          timestamp,
+          title: habit.name,
+          summary: 'Logged',
+          detail: habit.note || undefined,
+          kind: 'habit' as const,
+        }))
+      }
+      // Normal habits: one event if completed
       const completionTime = state.today.completionTimesByHabitId[habit.id]
       if (!completionTime) {
         return []

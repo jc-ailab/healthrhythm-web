@@ -838,16 +838,32 @@
 }
 
 .event-row {
-  display: grid;
-  grid-template-columns: 80px 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 2px;
   border-bottom: 1px solid rgba(96, 117, 103, 0.1);
 }
 
 .event-row:last-child {
   border-bottom: none;
+}
+
+.event-row-summary {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 2px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.event-row-summary::-webkit-details-marker {
+  display: none;
+}
+
+.event-detail {
+  padding: 0 2px 8px 90px;
+  color: #6e7c74;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .event-time {
