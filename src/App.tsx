@@ -112,6 +112,15 @@ function App() {
         <p className="top-bar-note">{tabNote(selectedTab)}</p>
       </header>
 
+      {app.storageNotice && (
+        <div className="storage-notice" role="status">
+          <p>{app.storageNotice.message}</p>
+          <button type="button" onClick={app.dismissStorageNotice}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <main className="page-shell">
         {selectedTab === 'rhythm' && (
           <RhythmTab

@@ -626,15 +626,31 @@
     flex-direction: column;
   }
 
+  /* All six destinations share the bar equally so none are hidden off-screen. */
   .tab-bar {
-    gap: 4px;
-    padding: 6px;
+    gap: 2px;
+    padding: 4px;
+    overflow-x: visible;
   }
 
   .tab-button {
     min-height: 48px;
-    flex-basis: 92px;
-    font-size: 0.84rem;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 2px;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .tab-button {
+    font-size: 0.72rem;
+  }
+}
+
+@media (max-width: 340px) {
+  .tab-button {
+    font-size: 0.64rem;
   }
 }
 
@@ -954,3 +970,33 @@
   color: #2d5a3e;
 }
 
+/* ─── Storage notice ───────────────────────────────────────────────────────── */
+
+.storage-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(1040px, calc(100% - 24px));
+  margin: 10px auto 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(166, 124, 54, 0.32);
+  background: #fbf3e2;
+  color: #5a4520;
+  font-size: 0.88rem;
+}
+
+.storage-notice p {
+  margin: 0;
+}
+
+.storage-notice button {
+  flex: none;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(166, 124, 54, 0.4);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+}

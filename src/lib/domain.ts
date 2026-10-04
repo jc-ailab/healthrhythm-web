@@ -38,6 +38,8 @@ export interface RhythmState {
   sessionStartAt: string | null
   activeStartAt: string | null
   elapsedSecondsBeforeCurrentRun: number
+  // Last time the app observed this session running. Optional so older saved states still load.
+  lastSeenAt?: string | null
 }
 
 export interface BreathState {
@@ -183,6 +185,8 @@ export const RHYTHM_DURATIONS = [15, 30, 45, 60] as const
 export const BREATH_ROUND_OPTIONS = [3, 5, 10] as const
 export const RHYTHM_MERGE_THRESHOLD_SECONDS = 3 * 60
 export const RHYTHM_MINIMUM_RECORDED_SECONDS = 60
+// A running session found this long past its planned end is treated as abandoned.
+export const RHYTHM_ABANDONED_GRACE_SECONDS = 10 * 60
 
 export const BUILT_IN_HABIT_IDS = {
   mindfulEating: 'mindfulEating',
