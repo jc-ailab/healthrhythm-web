@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createInitialState, toDayKey, type AppState } from './domain'
 import {
   backupKeyFor,
+  buildTodayTimeline,
   ensureCurrentDay,
   loadPersistedState,
   refreshAppState,
@@ -181,6 +182,41 @@ describe('loadPersistedState', () => {
 
     expect(result.notice).toBeNull()
     expect(result.state.version).toBe(3)
+  })
+
+  describe.each([
+    { version: 1, key: 'health-rhythm-web-v1' },
+    { version: 2, key: STORAGE_KEY },
+  ])('a v$version save from before multi-capture habits', ({ version, key }) => {
+    function legacySave() {
+      const saved = validSavedState()
+      saved.version = version
+      delete saved.library
+      delete saved.strength.routines
+      delete saved.selectedTab
+      delete saved.today.eventsByHabitId
+      saved.today.completionTimesByHabitId = { earlySleep: at(9).toISOString() }
+      return saved
+    }
+
+    it('migrates with an empty eventsByHabitId and keeps existing completions', () => {
+      storage.data.set(key, JSON.stringify(legacySave()))
+
+      const result = loadPersistedState(at(10))
+
+      expect(result.notice).toBeNull()
+      expect(result.state.version).toBe(3)
+      expect(result.state.today.eventsByHabitId).toEqual({})
+      expect(result.state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })
+    })
+
+    it('builds the Today timeline for the migrated state without throwing', () => {
+      storage.data.set(key, JSON.stringify(legacySave()))
+      const { state } = loadPersistedState(at(10))
+      const enabledHabits = state.library.habits.filter((habit) => habit.enabled)
+
+      expect(() => buildTodayTimeline(state, enabledHabits, [])).not.toThrow()
+    })
   })
 
   it('starts fresh without a notice when storage cannot be read at all', () => {

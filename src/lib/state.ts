@@ -705,7 +705,7 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     selectedTab: legacy.selectedTab ?? 'rhythm',
     rhythm: legacy.rhythm,
     breath: legacy.breath,
-    today: legacy.today,
+    today: { ...legacy.today, eventsByHabitId: legacy.today.eventsByHabitId ?? {} },
     strength: {
       completedExerciseIds: legacy.strength.completedExerciseIds,
       lastUpdatedAt: legacy.strength.lastUpdatedAt,
@@ -1252,7 +1252,7 @@ function resolveStrengthRoutines(
   }))
 }
 
-function buildTodayTimeline(
+export function buildTodayTimeline(
   state: AppState,
   visibleTodayHabits: HabitDefinition[],
   strengthRoutines: ResolvedStrengthRoutine[],
