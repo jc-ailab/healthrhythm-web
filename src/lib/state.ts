@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
   BREATH_MODE_LABELS,
   BREATH_ROUND_OPTIONS,
   BUILT_IN_HABIT_IDS,
+  RHYTHM_ABANDONED_GRACE_SECONDS,
   RHYTHM_BPM,
   RHYTHM_DURATIONS,
   RHYTHM_MERGE_THRESHOLD_SECONDS,
@@ -37,9 +38,18 @@ import {
   makeLocalId,
   toDayKey,
 } from './domain'
+import {
+  STORAGE_NOTICES,
+  getStorageNotice,
+  setStorageNotice,
+  subscribeStorageNotice,
+  type StorageNotice,
+} from './storageStatus'
 import { BreathCuePlayer, WebMetronome } from './webAudio'
 
 const STORAGE_KEY = 'health-rhythm-web-v2'
+const LEGACY_STORAGE_KEY = 'health-rhythm-web-v1'
+const BACKUP_KEY_PREFIX = 'health-rhythm-web-backup-'
 
 type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'strength'> & {
   version?: 1 | 2
@@ -107,20 +117,32 @@ export interface HealthRhythmViewModel extends AppActions {
   historyMonthSummary: HistorySummary
   selectedHistoryDayKey: string
   setSelectedHistoryDayKey: (dayKey: string) => void
+  storageNotice: StorageNotice | null
+  dismissStorageNotice: () => void
 }
 
 export function useHealthRhythmApp(): HealthRhythmViewModel {
-  const [state, setState] = useState<AppState>(() => loadState())
+  const [initialLoad] = useState(() => loadPersistedState(new Date()))
+  const [state, setState] = useState<AppState>(initialLoad.state)
   const [selectedHistoryDayKey, setSelectedHistoryDayKey] = useState(() => state.currentDayKey)
+  const storageNotice = useSyncExternalStore(subscribeStorageNotice, getStorageNotice)
   const metronomeRef = useRef(new WebMetronome())
   const breathCuePlayerRef = useRef(new BreathCuePlayer())
   const previousBreathStatusRef = useRef(state.breath.status)
   const previousBreathPhaseRef = useRef(state.breath.currentPhase)
 
   useEffect(() => {
-    saveState(state)
-    setSelectedHistoryDayKey((current) => (current > state.currentDayKey ? state.currentDayKey : current))
-  }, [state])
+    if (initialLoad.notice) {
+      setStorageNotice(initialLoad.notice)
+    }
+  }, [initialLoad])
+
+  useEffect(() => {
+    // When unreadable data could not be backed up, never write over it.
+    if (initialLoad.canPersist) {
+      saveState(state)
+    }
+  }, [initialLoad, state])
 
   useEffect(() => {
     const refresh = () => {
@@ -505,8 +527,11 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
 
   return {
     state,
-    selectedHistoryDayKey,
+    selectedHistoryDayKey:
+      selectedHistoryDayKey > state.currentDayKey ? state.currentDayKey : selectedHistoryDayKey,
     setSelectedHistoryDayKey,
+    storageNotice,
+    dismissStorageNotice: () => setStorageNotice(null),
     visibleTodayHabits: derived.visibleTodayHabits,
     habitLibrary: state.library.habits,
     exerciseLibrary: state.library.exercises,
@@ -527,18 +552,107 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   }
 }
 
-function loadState(): AppState {
-  try {
-    const rawValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem('health-rhythm-web-v1')
-    if (!rawValue) {
-      return syncHistory(createInitialState(new Date()))
-    }
+export interface LoadResult {
+  state: AppState
+  // False when unreadable data could not be backed up: the original must not be overwritten.
+  canPersist: boolean
+  notice: StorageNotice | null
+}
 
-    const parsed = JSON.parse(rawValue) as AppState | LegacyAppState
-    const migrated = migrateState(parsed, new Date())
-    return syncHistory(ensureCurrentDay(migrated, new Date()))
+export function loadPersistedState(now: Date): LoadResult {
+  let rawValue: string | null
+  try {
+    rawValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY)
   } catch {
-    return syncHistory(createInitialState(new Date()))
+    // Storage itself is unavailable; saveState will surface the problem on the first write.
+    return { state: freshState(now), canPersist: true, notice: null }
+  }
+
+  if (!rawValue) {
+    return { state: freshState(now), canPersist: true, notice: null }
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(rawValue)
+    assertStoredStateShape(parsed)
+    const migrated = migrateState(parsed, now)
+    return {
+      state: syncHistory(ensureCurrentDay(migrated, now)),
+      canPersist: true,
+      notice: null,
+    }
+  } catch {
+    const isBackedUp = backupUnreadableState(rawValue)
+    return {
+      state: freshState(now),
+      canPersist: isBackedUp,
+      notice: isBackedUp ? STORAGE_NOTICES.recovered : STORAGE_NOTICES.unprotected,
+    }
+  }
+}
+
+function freshState(now: Date) {
+  return syncHistory(createInitialState(now))
+}
+
+// The key is derived from the content so repeating a recovery (e.g. React StrictMode
+// running initializers twice) rewrites the same backup instead of creating copies.
+export function backupKeyFor(rawValue: string) {
+  let hash = 5381
+  for (let index = 0; index < rawValue.length; index += 1) {
+    hash = ((hash * 33) ^ rawValue.charCodeAt(index)) >>> 0
+  }
+  return `${BACKUP_KEY_PREFIX}${hash.toString(36)}-${rawValue.length}`
+}
+
+function backupUnreadableState(rawValue: string) {
+  try {
+    localStorage.setItem(backupKeyFor(rawValue), rawValue)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const RUN_STATUSES = ['idle', 'running', 'paused', 'completed']
+const BREATH_PHASES = ['inhale', 'hold', 'exhale', 'endHold']
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+// Throws when stored data is not safe to hand to migrateState. Only fields the app
+// already dereferences unconditionally are checked, so valid older saves still load.
+function assertStoredStateShape(value: unknown): asserts value is AppState | LegacyAppState {
+  const fail = (field: string): never => {
+    throw new Error(`Stored state is invalid: ${field}`)
+  }
+
+  if (!isRecord(value)) return fail('root')
+  const { rhythm, breath, today, strength, library, history } = value
+
+  if (!isRecord(rhythm) || !Array.isArray(rhythm.entriesToday)) return fail('rhythm')
+  if (!RUN_STATUSES.includes(rhythm.status as string)) return fail('rhythm.status')
+  if (typeof rhythm.selectedDurationMinutes !== 'number') return fail('rhythm.selectedDurationMinutes')
+
+  if (!isRecord(breath) || !Array.isArray(breath.entriesToday)) return fail('breath')
+  if (!RUN_STATUSES.includes(breath.status as string)) return fail('breath.status')
+  if (!BREATH_PHASES.includes(breath.currentPhase as string)) return fail('breath.currentPhase')
+  if (typeof breath.selectedRounds !== 'number') return fail('breath.selectedRounds')
+  if (!isRecord(breath.customPattern)) return fail('breath.customPattern')
+
+  if (!isRecord(today) || !isRecord(today.completionTimesByHabitId)) return fail('today')
+
+  if (!isRecord(strength) || !Array.isArray(strength.completedExerciseIds)) return fail('strength')
+  if (strength.routines !== undefined && !Array.isArray(strength.routines)) return fail('strength.routines')
+
+  if (history !== undefined && !Array.isArray(history)) return fail('history')
+
+  if (value.version === 3) {
+    if (!isRecord(library) || !Array.isArray(library.habits) || !Array.isArray(library.exercises)) {
+      return fail('library')
+    }
+    if (!Array.isArray(strength.routines)) return fail('strength.routines')
   }
 }
 
@@ -579,17 +693,31 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
   })
 }
 
-function saveState(state: AppState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+export function saveState(state: AppState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    setStorageNotice(STORAGE_NOTICES.saveFailed)
+    return false
+  }
+
+  if (getStorageNotice()?.kind === 'save-failed') {
+    setStorageNotice(null)
+  }
+  return true
 }
 
-function ensureCurrentDay(state: AppState, now: Date): AppState {
+export function ensureCurrentDay(state: AppState, now: Date): AppState {
   const currentDayKey = toDayKey(now)
   if (state.currentDayKey === currentDayKey) {
     return syncHistory(refreshRunningState(state, now))
   }
 
-  const refreshed = syncHistory(refreshRunningState(state, now))
+  // Rhythm is judged against the real clock (so abandoned sessions are detected); Breath only
+  // advances to midnight so rounds after midnight are not credited to the old day.
+  const refreshed = settleOpenSessionsAtDayEnd(
+    syncHistory(refreshRunningState(state, now, endOfDayKey(state.currentDayKey))),
+  )
   return syncHistory({
     ...refreshed,
     currentDayKey,
@@ -623,17 +751,38 @@ function ensureCurrentDay(state: AppState, now: Date): AppState {
   })
 }
 
-function refreshAppState(state: AppState, now: Date) {
+// A day change must not silently drop a session that was in progress. Whatever was
+// completed by the end of the old day is finalized into that day's record.
+function settleOpenSessionsAtDayEnd(state: AppState): AppState {
+  const endOfDay = endOfDayKey(state.currentDayKey)
+  let next = state
+
+  if (next.rhythm.status === 'running' || next.rhythm.status === 'paused') {
+    next = finalizeRhythmState(next, endOfDay, currentRhythmElapsedSeconds(next.rhythm, endOfDay), false)
+  }
+  if (next.breath.status === 'running' || next.breath.status === 'paused') {
+    next = finalizeBreathState(next, endOfDay)
+  }
+
+  return next
+}
+
+function endOfDayKey(dayKey: string) {
+  const [year, month, day] = dayKey.split('-').map(Number)
+  return new Date(year, month - 1, day + 1, 0, 0, 0, 0)
+}
+
+export function refreshAppState(state: AppState, now: Date) {
   return ensureCurrentDay(state, now)
 }
 
-function refreshRunningState(state: AppState, now: Date): AppState {
+function refreshRunningState(state: AppState, now: Date, breathNow: Date = now): AppState {
   let next = state
   if (state.rhythm.status === 'running') {
     next = refreshRhythmState(next, now)
   }
   if (next.breath.status === 'running') {
-    next = refreshBreathState(next, now)
+    next = refreshBreathState(next, breathNow < now ? breathNow : now)
   }
   return next
 }
@@ -646,13 +795,30 @@ function refreshRhythmState(state: AppState, now: Date): AppState {
   const elapsedSeconds = currentRhythmElapsedSeconds(state.rhythm, now)
   const targetSeconds = state.rhythm.selectedDurationMinutes * 60
   if (elapsedSeconds < targetSeconds) {
-    return state
+    return { ...state, rhythm: { ...state.rhythm, lastSeenAt: now.toISOString() } }
+  }
+
+  if (isAbandonedRhythm(state.rhythm, targetSeconds, now)) {
+    // Nobody was around to see this session through; credit only the time the app observed.
+    const lastSeen = new Date(state.rhythm.lastSeenAt ?? state.rhythm.activeStartAt ?? now)
+    const observedSeconds = Math.min(targetSeconds, currentRhythmElapsedSeconds(state.rhythm, lastSeen))
+    return finalizeRhythmState(state, lastSeen, observedSeconds, false)
   }
 
   return finalizeRhythmState(state, now, targetSeconds, true)
 }
 
-function toggleRhythmState(state: AppState, now: Date): AppState {
+function isAbandonedRhythm(rhythm: AppState['rhythm'], targetSeconds: number, now: Date) {
+  if (!rhythm.activeStartAt) {
+    return false
+  }
+
+  const plannedEndMs =
+    new Date(rhythm.activeStartAt).getTime() + (targetSeconds - rhythm.elapsedSecondsBeforeCurrentRun) * 1000
+  return now.getTime() - plannedEndMs > RHYTHM_ABANDONED_GRACE_SECONDS * 1000
+}
+
+export function toggleRhythmState(state: AppState, now: Date): AppState {
   switch (state.rhythm.status) {
     case 'idle':
     case 'completed':
@@ -663,6 +829,7 @@ function toggleRhythmState(state: AppState, now: Date): AppState {
           status: 'running',
           sessionStartAt: now.toISOString(),
           activeStartAt: now.toISOString(),
+          lastSeenAt: now.toISOString(),
           elapsedSecondsBeforeCurrentRun: 0,
         },
       })
@@ -683,12 +850,13 @@ function toggleRhythmState(state: AppState, now: Date): AppState {
           ...state.rhythm,
           status: 'running',
           activeStartAt: now.toISOString(),
+          lastSeenAt: now.toISOString(),
         },
       })
   }
 }
 
-function endRhythmState(state: AppState, now: Date): AppState {
+export function endRhythmState(state: AppState, now: Date): AppState {
   if (!['running', 'paused'].includes(state.rhythm.status)) {
     return syncHistory({
       ...state,
@@ -731,6 +899,7 @@ function finalizeRhythmState(
       entriesToday,
       sessionStartAt: null,
       activeStartAt: null,
+      lastSeenAt: null,
       elapsedSecondsBeforeCurrentRun: 0,
     },
   })
@@ -795,7 +964,7 @@ function freshBreathState(state: AppState['breath']): AppState['breath'] {
   }
 }
 
-function toggleBreathState(state: AppState, now: Date): AppState {
+export function toggleBreathState(state: AppState, now: Date): AppState {
   switch (state.breath.status) {
     case 'idle':
     case 'completed': {
