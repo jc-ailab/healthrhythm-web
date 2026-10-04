@@ -11,7 +11,13 @@ import {
   toggleRhythmState,
   endRhythmState,
 } from './state'
-import { STORAGE_NOTICES, getStorageNotice, setStorageNotice } from './storageStatus'
+import {
+  STORAGE_NOTICES,
+  dismissStorageNotice,
+  getStorageNotice,
+  resetStorageStatus,
+  setStorageNotice,
+} from './storageStatus'
 
 const STORAGE_KEY = 'health-rhythm-web-v2'
 
@@ -40,7 +46,7 @@ let storage: ReturnType<typeof makeFakeStorage>
 beforeEach(() => {
   storage = makeFakeStorage()
   vi.stubGlobal('localStorage', storage)
-  setStorageNotice(null)
+  resetStorageStatus()
 })
 
 afterEach(() => {
@@ -217,6 +223,58 @@ describe('saveState', () => {
 
     expect(getStorageNotice()).toBe(STORAGE_NOTICES.recovered)
   })
+
+  describe('save-failed dismissal', () => {
+    const failingState = () => stateAt(at(10))
+
+    it('shows the notice on a failed save and hides it when dismissed', () => {
+      storage.failWritesWhen(() => true)
+
+      saveState(failingState())
+      expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
+
+      dismissStorageNotice()
+      expect(getStorageNotice()).toBeNull()
+    })
+
+    it('does not re-show the notice while saves keep failing', () => {
+      storage.failWritesWhen(() => true)
+      saveState(failingState())
+      dismissStorageNotice()
+
+      for (let tick = 0; tick < 20; tick += 1) {
+        expect(saveState(failingState())).toBe(false)
+      }
+
+      expect(getStorageNotice()).toBeNull()
+    })
+
+    it('resets the dismissal after a successful save so a later failure shows again', () => {
+      storage.failWritesWhen(() => true)
+      saveState(failingState())
+      dismissStorageNotice()
+      saveState(failingState())
+      expect(getStorageNotice()).toBeNull()
+
+      storage.failWritesWhen(() => false)
+      expect(saveState(failingState())).toBe(true)
+      expect(getStorageNotice()).toBeNull()
+
+      storage.failWritesWhen(() => true)
+      saveState(failingState())
+      expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
+    })
+
+    it('does not latch when a different notice is dismissed', () => {
+      setStorageNotice(STORAGE_NOTICES.recovered)
+      dismissStorageNotice()
+
+      storage.failWritesWhen(() => true)
+      saveState(failingState())
+
+      expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
+    })
+  })
 })
 
 describe('abandoned Rhythm sessions', () => {
@@ -371,6 +429,42 @@ describe('sessions across midnight', () => {
     expect(sessions).toHaveLength(1)
     expect(sessions[0].completedRounds).toBe(3)
     expect(sessions[0].totalDurationSeconds).toBe(60)
+  })
+
+  describe('when the device clock moves backwards across a day boundary', () => {
+    it('does not credit a full future-duration Rhythm session', () => {
+      // Session starts on day 15 at 00:05; the clock then reports day 14 at 23:30.
+      const start = at(0, 5, 0, 15)
+      const running = toggleRhythmState(stateAt(start), start)
+      expect(running.currentDayKey).toBe(day2)
+
+      const state = refreshAppState(running, at(23, 30, 0, 14))
+
+      const recorded = state.history.flatMap((record) => record.rhythmEntries)
+      expect(recorded).toEqual([])
+      expect(state.rhythm.entriesToday).toEqual([])
+      expect(state.rhythm.status).toBe('idle')
+    })
+
+    it('does not credit a full future-duration Breath session either', () => {
+      const start = at(0, 5, 0, 15)
+      const running = toggleBreathState(stateAt(start), start)
+
+      const state = refreshAppState(running, at(23, 30, 0, 14))
+
+      const recorded = state.history.flatMap((record) => record.breathSessions)
+      expect(recorded).toEqual([])
+      expect(state.breath.status).toBe('idle')
+    })
+
+    it('still settles at midnight when time moves forward normally', () => {
+      const start = at(23, 50)
+      const running = toggleRhythmState(stateAt(start), start)
+
+      const state = refreshAppState(running, at(0, 1, 0, 15))
+
+      expect(historyFor(state, day1)?.rhythmEntries[0].durationSeconds).toBe(600)
+    })
   })
 
   it('leaves a normal same-day tick untouched', () => {

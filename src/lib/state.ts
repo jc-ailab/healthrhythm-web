@@ -40,7 +40,10 @@ import {
 } from './domain'
 import {
   STORAGE_NOTICES,
+  dismissStorageNotice,
   getStorageNotice,
+  reportSaveFailure,
+  reportSaveSuccess,
   setStorageNotice,
   subscribeStorageNotice,
   type StorageNotice,
@@ -531,7 +534,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       selectedHistoryDayKey > state.currentDayKey ? state.currentDayKey : selectedHistoryDayKey,
     setSelectedHistoryDayKey,
     storageNotice,
-    dismissStorageNotice: () => setStorageNotice(null),
+    dismissStorageNotice,
     visibleTodayHabits: derived.visibleTodayHabits,
     habitLibrary: state.library.habits,
     exerciseLibrary: state.library.exercises,
@@ -697,13 +700,11 @@ export function saveState(state: AppState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   } catch {
-    setStorageNotice(STORAGE_NOTICES.saveFailed)
+    reportSaveFailure()
     return false
   }
 
-  if (getStorageNotice()?.kind === 'save-failed') {
-    setStorageNotice(null)
-  }
+  reportSaveSuccess()
   return true
 }
 
@@ -717,6 +718,7 @@ export function ensureCurrentDay(state: AppState, now: Date): AppState {
   // advances to midnight so rounds after midnight are not credited to the old day.
   const refreshed = settleOpenSessionsAtDayEnd(
     syncHistory(refreshRunningState(state, now, endOfDayKey(state.currentDayKey))),
+    now,
   )
   return syncHistory({
     ...refreshed,
@@ -753,15 +755,18 @@ export function ensureCurrentDay(state: AppState, now: Date): AppState {
 
 // A day change must not silently drop a session that was in progress. Whatever was
 // completed by the end of the old day is finalized into that day's record.
-function settleOpenSessionsAtDayEnd(state: AppState): AppState {
+function settleOpenSessionsAtDayEnd(state: AppState, now: Date): AppState {
+  // If the device clock moved backwards, the stored day's midnight can still be in the
+  // future; never settle at a time that has not happened yet.
   const endOfDay = endOfDayKey(state.currentDayKey)
+  const settleAt = endOfDay < now ? endOfDay : now
   let next = state
 
   if (next.rhythm.status === 'running' || next.rhythm.status === 'paused') {
-    next = finalizeRhythmState(next, endOfDay, currentRhythmElapsedSeconds(next.rhythm, endOfDay), false)
+    next = finalizeRhythmState(next, settleAt, currentRhythmElapsedSeconds(next.rhythm, settleAt), false)
   }
   if (next.breath.status === 'running' || next.breath.status === 'paused') {
-    next = finalizeBreathState(next, endOfDay)
+    next = finalizeBreathState(next, settleAt)
   }
 
   return next

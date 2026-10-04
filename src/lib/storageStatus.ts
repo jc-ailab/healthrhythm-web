@@ -27,6 +27,9 @@ export const STORAGE_NOTICES = {
 } as const satisfies Record<string, StorageNotice>
 
 let currentNotice: StorageNotice | null = null
+// Set when the user dismisses a save-failed notice; stays set until a save succeeds,
+// so a write that keeps failing (e.g. every tick of a running session) cannot re-nag.
+let isSaveFailureDismissed = false
 const listeners = new Set<() => void>()
 
 export function getStorageNotice() {
@@ -40,6 +43,31 @@ export function setStorageNotice(notice: StorageNotice | null) {
 
   currentNotice = notice
   listeners.forEach((listener) => listener())
+}
+
+export function dismissStorageNotice() {
+  if (currentNotice?.kind === 'save-failed') {
+    isSaveFailureDismissed = true
+  }
+  setStorageNotice(null)
+}
+
+export function reportSaveFailure() {
+  if (!isSaveFailureDismissed) {
+    setStorageNotice(STORAGE_NOTICES.saveFailed)
+  }
+}
+
+export function reportSaveSuccess() {
+  isSaveFailureDismissed = false
+  if (currentNotice?.kind === 'save-failed') {
+    setStorageNotice(null)
+  }
+}
+
+export function resetStorageStatus() {
+  isSaveFailureDismissed = false
+  setStorageNotice(null)
 }
 
 export function subscribeStorageNotice(listener: () => void) {
