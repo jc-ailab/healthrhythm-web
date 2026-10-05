@@ -1304,3 +1304,153 @@
 .metric-row.keep-case span {
   text-transform: none;
 }
+
+/* ─── Data & backups (数据与备份) ──────────────────────────────────────────── */
+
+.data-section .section-header p,
+.data-current {
+  overflow-wrap: anywhere;
+}
+
+.data-current {
+  margin: 0 0 10px;
+  color: #5f6d65;
+  font-size: 0.86rem;
+}
+
+.data-block {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(96, 117, 103, 0.1);
+}
+
+.data-block h3 {
+  margin: 0;
+  color: #24312a;
+  font-size: 0.95rem;
+}
+
+.data-block p,
+.data-confirm p,
+.backup-row p {
+  margin: 0;
+  color: #5f6d65;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.data-block .primary-button,
+.data-block .secondary-button {
+  width: 100%;
+}
+
+.data-message {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #eef4ef;
+  color: #2d5a3e;
+  font-size: 0.86rem;
+}
+
+.data-message.is-error {
+  background: #fdf1ef;
+  color: #8c3b30;
+}
+
+.data-confirm {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(180, 100, 90, 0.32);
+  background: #fdf7f5;
+}
+
+.data-confirm strong {
+  color: #24312a;
+}
+
+.data-confirm .data-warning {
+  color: #8c3b30;
+  font-weight: 600;
+}
+
+.data-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.data-actions .primary-button,
+.data-actions .secondary-button {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+}
+
+.primary-button.is-danger {
+  background: #a3473a;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.text-button:disabled {
+  opacity: 0.45;
+}
+
+.backup-list {
+  display: grid;
+  gap: 8px;
+}
+
+.backup-row {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(96, 117, 103, 0.16);
+  background: #faf8f2;
+}
+
+.backup-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+
+.backup-row-head strong {
+  color: #24312a;
+  font-size: 0.92rem;
+}
+
+.backup-row-head span {
+  color: #6e7c74;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.backup-row .backup-meta {
+  color: #8a9990;
+  font-size: 0.76rem;
+}
+
+.backup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+}

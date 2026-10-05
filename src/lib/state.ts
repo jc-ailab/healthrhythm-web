@@ -67,10 +67,12 @@ import {
   type StorageNotice,
 } from './storageStatus'
 import { BreathCuePlayer, WebMetronome } from './webAudio'
+import { backupKeyFor, writeBackup } from './backupStore'
+
+export { backupKeyFor }
 
 const STORAGE_KEY = 'health-rhythm-web-v2'
 const LEGACY_STORAGE_KEY = 'health-rhythm-web-v1'
-const BACKUP_KEY_PREFIX = 'health-rhythm-web-backup-'
 
 type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'strength'> & {
   version?: 1 | 2
@@ -165,6 +167,10 @@ export interface HealthRhythmViewModel extends AppActions {
   historyNavigation: Record<HistoryPeriodKind, HistoryPeriodNavigation>
   stepHistoryPeriod: (kind: HistoryPeriodKind, delta: -1 | 1) => void
   resetHistoryPeriod: (kind: HistoryPeriodKind) => void
+  /** False when unreadable data could not be backed up; nothing may overwrite it then. */
+  canPersist: boolean
+  /** Swaps in a state that has already been validated and saved (see dataTransfer). */
+  replaceAppState: (next: AppState) => void
   storageNotice: StorageNotice | null
   dismissStorageNotice: () => void
 }
@@ -644,6 +650,11 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })),
     resetHistoryPeriod: (kind) =>
       setSelectedHistoryKeys((current) => ({ ...current, [kind]: periodKeyFor(kind, state.currentDayKey) })),
+    canPersist: initialLoad.canPersist,
+    replaceAppState: (next) => {
+      // Stay on Library so the success message is visible after the swap.
+      setState(() => ({ ...next, selectedTab: 'library' }))
+    },
     storageNotice,
     dismissStorageNotice,
     visibleTodayHabits: derived.visibleTodayHabits,
@@ -688,14 +699,7 @@ export function loadPersistedState(now: Date): LoadResult {
   }
 
   try {
-    const parsed: unknown = JSON.parse(rawValue)
-    assertStoredStateShape(parsed)
-    const migrated = migrateState(parsed, now)
-    return {
-      state: syncHistory(ensureCurrentDay(migrated, now)),
-      canPersist: true,
-      notice: null,
-    }
+    return { state: restoreStoredState(JSON.parse(rawValue), now), canPersist: true, notice: null }
   } catch {
     const isBackedUp = backupUnreadableState(rawValue)
     return {
@@ -710,23 +714,17 @@ function freshState(now: Date) {
   return syncHistory(createInitialState(now))
 }
 
-// The key is derived from the content so repeating a recovery (e.g. React StrictMode
-// running initializers twice) rewrites the same backup instead of creating copies.
-export function backupKeyFor(rawValue: string) {
-  let hash = 5381
-  for (let index = 0; index < rawValue.length; index += 1) {
-    hash = ((hash * 33) ^ rawValue.charCodeAt(index)) >>> 0
-  }
-  return `${BACKUP_KEY_PREFIX}${hash.toString(36)}-${rawValue.length}`
+function backupUnreadableState(rawValue: string) {
+  return writeBackup(rawValue, 'unreadable', new Date()) !== null
 }
 
-function backupUnreadableState(rawValue: string) {
-  try {
-    localStorage.setItem(backupKeyFor(rawValue), rawValue)
-    return true
-  } catch {
-    return false
-  }
+/**
+ * Validates and migrates a stored or imported save (any supported version) into a current
+ * AppState for `now`. Throws when the value is not safe to use.
+ */
+export function restoreStoredState(value: unknown, now: Date): AppState {
+  assertStoredStateShape(value)
+  return syncHistory(ensureCurrentDay(migrateState(value, now), now))
 }
 
 const RUN_STATUSES = ['idle', 'running', 'paused', 'completed']
