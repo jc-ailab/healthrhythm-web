@@ -92,6 +92,7 @@ export interface HistoryDailySummary {
   strengthSummary: string
   mindfulEatingCompleted: boolean
   earlySleepCompleted: boolean
+  mindfulEatingCaptureCount: number
   foundation: { id: FoundationItemId; label: string; completedAt: string | null }[]
   foundationCompletedCount: number
   movementSessions: MovementSession[]
@@ -386,41 +387,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     toggleHabit(habitId) {
-      setState((current) => {
-        const next = ensureCurrentDay(current, new Date())
-        const now = new Date().toISOString()
-
-        if (MULTI_CAPTURE_HABIT_IDS.has(habitId)) {
-          // Append a new capture timestamp rather than toggling
-          const existing = next.today.eventsByHabitId[habitId] ?? []
-          return syncHistory({
-            ...next,
-            today: {
-              ...next.today,
-              eventsByHabitId: {
-                ...next.today.eventsByHabitId,
-                [habitId]: [...existing, now],
-              },
-            },
-          })
-        }
-
-        // Normal toggle behavior for all other habits
-        const completionTimesByHabitId = { ...next.today.completionTimesByHabitId }
-        if (completionTimesByHabitId[habitId]) {
-          delete completionTimesByHabitId[habitId]
-        } else {
-          completionTimesByHabitId[habitId] = now
-        }
-
-        return syncHistory({
-          ...next,
-          today: {
-            ...next.today,
-            completionTimesByHabitId,
-          },
-        })
-      })
+      setState((current) => toggleHabitState(ensureCurrentDay(current, new Date()), habitId, new Date()))
     },
     toggleStrengthExercise(exerciseId) {
       setState((current) => {
@@ -770,6 +737,7 @@ function assertStoredStateShape(value: unknown): asserts value is AppState | Leg
   for (const record of history ?? []) {
     if (!isRecord(record)) continue
     if (record.foundation !== undefined && !isRecord(record.foundation)) return fail('history.foundation')
+    if (record.habitEvents !== undefined && !isRecord(record.habitEvents)) return fail('history.habitEvents')
     if (record.movementSessions !== undefined && !Array.isArray(record.movementSessions)) {
       return fail('history.movementSessions')
     }
@@ -839,6 +807,7 @@ function normalizeDayRecord(record: DayRecord): DayRecord {
   }
   return {
     ...record,
+    habitEvents: record.habitEvents ?? {},
     foundation: record.foundation ?? {},
     movementSessions: record.movementSessions ?? [],
   }
@@ -1329,6 +1298,7 @@ function syncHistory(state: AppState): AppState {
   currentRecord.strengthCompletedExerciseIds = state.strength.completedExerciseIds
   currentRecord.strengthLastUpdatedAt = state.strength.lastUpdatedAt
   currentRecord.habits = state.today.completionTimesByHabitId
+  currentRecord.habitEvents = state.today.eventsByHabitId
   currentRecord.foundation = state.today.foundationCompletedAt
   currentRecord.movementSessions = state.today.movementSessions
 
@@ -1340,6 +1310,42 @@ function syncHistory(state: AppState): AppState {
     ...state,
     history,
   }
+}
+
+export function toggleHabitState(state: AppState, habitId: HabitId, nowDate: Date): AppState {
+  const next = state
+  const now = nowDate.toISOString()
+
+  if (MULTI_CAPTURE_HABIT_IDS.has(habitId)) {
+    // Append a new capture timestamp rather than toggling
+    const existing = next.today.eventsByHabitId[habitId] ?? []
+    return syncHistory({
+      ...next,
+      today: {
+        ...next.today,
+        eventsByHabitId: {
+          ...next.today.eventsByHabitId,
+          [habitId]: [...existing, now],
+        },
+      },
+    })
+  }
+
+  // Normal toggle behavior for all other habits
+  const completionTimesByHabitId = { ...next.today.completionTimesByHabitId }
+  if (completionTimesByHabitId[habitId]) {
+    delete completionTimesByHabitId[habitId]
+  } else {
+    completionTimesByHabitId[habitId] = now
+  }
+
+  return syncHistory({
+    ...next,
+    today: {
+      ...next.today,
+      completionTimesByHabitId,
+    },
+  })
 }
 
 export function toggleFoundationItemState(state: AppState, itemId: FoundationItemId, now: Date): AppState {
@@ -1649,13 +1655,20 @@ export function buildDailyHistorySummary(record: DayRecord, routines: ResolvedSt
     breathSessionsCount: record.breathSessions.length,
     breathRoundsCount: record.breathSessions.reduce((total, session) => total + session.completedRounds, 0),
     strengthSummary: buildStrengthSummary(record.strengthCompletedExerciseIds, routines),
-    mindfulEatingCompleted: Boolean(record.habits[BUILT_IN_HABIT_IDS.mindfulEating]),
-    earlySleepCompleted: Boolean(record.habits[BUILT_IN_HABIT_IDS.earlySleep]),
+    mindfulEatingCompleted: isHabitDoneOn(record, BUILT_IN_HABIT_IDS.mindfulEating),
+    mindfulEatingCaptureCount: record.habitEvents[BUILT_IN_HABIT_IDS.mindfulEating]?.length ?? 0,
+    earlySleepCompleted: isHabitDoneOn(record, BUILT_IN_HABIT_IDS.earlySleep),
     foundation,
     foundationCompletedCount: foundation.filter((item) => item.completedAt).length,
     movementSessions,
     movementTotalMinutes: movementSessions.reduce((total, session) => total + session.durationMinutes, 0),
   }
+}
+
+// A day counts once per habit: a completion time (toggle habits, and older Mindful eating
+// saves) or at least one capture (multi-capture habits).
+function isHabitDoneOn(record: DayRecord, habitId: HabitId) {
+  return Boolean(record.habits[habitId]) || (record.habitEvents[habitId]?.length ?? 0) > 0
 }
 
 function foundationCountForRecord(record: DayRecord) {
@@ -1757,8 +1770,8 @@ export function buildHistorySummary(
     ),
     rhythmDaysCount: matchingRecords.filter((record) => record.rhythmEntries.length > 0).length,
     strengthDaysCount: matchingRecords.filter((record) => record.strengthCompletedExerciseIds.length > 0).length,
-    mindfulEatingDaysCount: matchingRecords.filter((record) => Boolean(record.habits[BUILT_IN_HABIT_IDS.mindfulEating])).length,
-    earlySleepDaysCount: matchingRecords.filter((record) => Boolean(record.habits[BUILT_IN_HABIT_IDS.earlySleep])).length,
+    mindfulEatingDaysCount: matchingRecords.filter((record) => isHabitDoneOn(record, BUILT_IN_HABIT_IDS.mindfulEating)).length,
+    earlySleepDaysCount: matchingRecords.filter((record) => isHabitDoneOn(record, BUILT_IN_HABIT_IDS.earlySleep)).length,
     foundationDaysById: Object.fromEntries(
       FOUNDATION_ITEMS.map((item) => [
         item.id,
