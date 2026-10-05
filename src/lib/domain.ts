@@ -62,6 +62,30 @@ export interface BreathState {
 export interface TodayState {
   completionTimesByHabitId: Partial<Record<HabitId, string>>
   eventsByHabitId: Partial<Record<HabitId, string[]>>
+  /** Completion time per daily foundation item (see FOUNDATION_ITEMS). */
+  foundationCompletedAt: Partial<Record<FoundationItemId, string>>
+  movementSessions: MovementSession[]
+}
+
+export type FoundationItemId = 'lowerAbs' | 'lowerBack' | 'pelvicFloor' | 'spineMobility'
+export type MovementIntensity = 'light' | 'moderate' | 'hard'
+
+/** What the user enters when logging or editing a session. */
+export interface MovementSessionDraft {
+  typeId: string
+  durationMinutes: number
+  intensity?: MovementIntensity
+  note?: string
+}
+
+export interface MovementSession {
+  id: string
+  // Kept as a plain string so a record whose type is later retired still loads and renders.
+  typeId: string
+  loggedAt: string
+  durationMinutes: number
+  intensity?: MovementIntensity
+  note?: string
 }
 
 export interface StrengthState {
@@ -77,6 +101,8 @@ export interface DayRecord {
   strengthCompletedExerciseIds: string[]
   strengthLastUpdatedAt: string | null
   habits: Partial<Record<HabitId, string>>
+  foundation: Partial<Record<FoundationItemId, string>>
+  movementSessions: MovementSession[]
 }
 
 export interface HabitDefinition {
@@ -169,6 +195,18 @@ export interface HistorySummary {
   strengthDaysCount: number
   mindfulEatingDaysCount: number
   earlySleepDaysCount: number
+  foundationDaysById: Record<FoundationItemId, number>
+  /** Days of the interval up to and including today; days still ahead are not counted against rates. */
+  elapsedDaysCount: number
+  /** Item-days completed across the interval (each day contributes 0…FOUNDATION_ITEMS.length). */
+  foundationCompletedCount: number
+  /** FOUNDATION_ITEMS.length × elapsedDaysCount. */
+  foundationPossibleCount: number
+  foundationFullDaysCount: number
+  foundationDailyCounts: { dayKey: string; completedCount: number }[]
+  movementSessionsCount: number
+  movementTotalMinutes: number
+  movementByType: { typeId: string; sessionsCount: number; totalMinutes: number }[]
 }
 
 export interface TodayTimelineEvent {
@@ -177,7 +215,7 @@ export interface TodayTimelineEvent {
   title: string
   summary: string
   detail?: string
-  kind: 'rhythm' | 'breath' | 'strength' | 'habit'
+  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement'
 }
 
 export const RHYTHM_BPM = 180
@@ -411,6 +449,48 @@ export const STRENGTH_ROUTINES: StrengthRoutine[] = [
   },
 ]
 
+// Ids are stored in saved data and must never change; labels are display-only.
+export const FOUNDATION_ITEMS: readonly { id: FoundationItemId; label: string }[] = [
+  { id: 'lowerAbs', label: '下腹核心' },
+  { id: 'lowerBack', label: '腰背稳定' },
+  { id: 'pelvicFloor', label: '盆底肌' },
+  { id: 'spineMobility', label: '脊柱活动' },
+]
+
+export const MOVEMENT_TYPES: readonly { id: string; label: string; defaultMinutes: number }[] = [
+  { id: 'swimming', label: '游泳', defaultMinutes: 30 },
+  { id: 'zumba', label: 'Zumba', defaultMinutes: 45 },
+  { id: 'yoga', label: '瑜伽', defaultMinutes: 30 },
+  { id: 'jingang', label: '金刚功', defaultMinutes: 30 },
+]
+
+export const MOVEMENT_INTENSITY_LABELS: Record<MovementIntensity, string> = {
+  light: '轻松',
+  moderate: '适中',
+  hard: '较强',
+}
+
+export const MOVEMENT_DURATION_PRESETS = [15, 30, 45, 60] as const
+export const MOVEMENT_MAX_MINUTES = 600
+
+export function isKnownMovementType(typeId: string) {
+  return MOVEMENT_TYPES.some((type) => type.id === typeId)
+}
+
+/** Whole minutes in 1…MOVEMENT_MAX_MINUTES, or null when the value is not a usable duration. */
+export function parseMovementMinutes(value: string | number): number | null {
+  const minutes = typeof value === 'number' ? value : Number(value.trim() || Number.NaN)
+  if (!Number.isFinite(minutes)) {
+    return null
+  }
+  const rounded = Math.round(minutes)
+  return rounded >= 1 && rounded <= MOVEMENT_MAX_MINUTES ? rounded : null
+}
+
+export function movementTypeLabel(typeId: string) {
+  return MOVEMENT_TYPES.find((type) => type.id === typeId)?.label ?? typeId
+}
+
 export const BREATH_MODE_LABELS: Record<BreathMode, string> = {
   fourSevenEight: '4-7-8',
   fourFourFourFour: '4-4-4-4',
@@ -478,6 +558,8 @@ export function createEmptyDayRecord(dayKey: string): DayRecord {
     strengthCompletedExerciseIds: [],
     strengthLastUpdatedAt: null,
     habits: {},
+    foundation: {},
+    movementSessions: [],
   }
 }
 
@@ -516,6 +598,8 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
     today: {
       completionTimesByHabitId: {},
       eventsByHabitId: {},
+      foundationCompletedAt: {},
+      movementSessions: [],
     },
     strength: {
       completedExerciseIds: [],
@@ -540,6 +624,40 @@ export function toDayKey(date: Date) {
 export function fromDayKey(dayKey: string) {
   const [year, month, day] = dayKey.split('-').map(Number)
   return new Date(year, month - 1, day, 12, 0, 0, 0)
+}
+
+export function shiftDayKey(dayKey: string, days: number) {
+  const date = fromDayKey(dayKey)
+  date.setDate(date.getDate() + days)
+  return toDayKey(date)
+}
+
+/** The Monday that starts the week containing dayKey. */
+export function weekStartDayKey(dayKey: string) {
+  const day = fromDayKey(dayKey).getDay()
+  return shiftDayKey(dayKey, day === 0 ? -6 : 1 - day)
+}
+
+export function weekDayKeys(weekStart: string) {
+  return Array.from({ length: 7 }, (_, index) => shiftDayKey(weekStart, index))
+}
+
+/** 'YYYY-MM' */
+export function monthKeyOf(dayKey: string) {
+  return dayKey.slice(0, 7)
+}
+
+export function shiftMonthKey(monthKey: string, months: number) {
+  const [year, month] = monthKey.split('-').map(Number)
+  return toDayKey(new Date(year, month - 1 + months, 1, 12)).slice(0, 7)
+}
+
+export function monthDayKeys(monthKey: string) {
+  const keys: string[] = []
+  for (let dayKey = `${monthKey}-01`; monthKeyOf(dayKey) === monthKey; dayKey = shiftDayKey(dayKey, 1)) {
+    keys.push(dayKey)
+  }
+  return keys
 }
 
 export function formatClockTime(value: string | Date) {

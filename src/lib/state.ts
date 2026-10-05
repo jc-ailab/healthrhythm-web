@@ -4,6 +4,9 @@ import {
   BREATH_MODE_LABELS,
   BREATH_ROUND_OPTIONS,
   BUILT_IN_HABIT_IDS,
+  FOUNDATION_ITEMS,
+  MOVEMENT_INTENSITY_LABELS,
+  MOVEMENT_TYPES,
   MULTI_CAPTURE_HABIT_IDS,
   RHYTHM_ABANDONED_GRACE_SECONDS,
   RHYTHM_BPM,
@@ -17,15 +20,20 @@ import {
   type BreathSessionEntry,
   type DayRecord,
   type ExerciseDefinition,
+  type FoundationItemId,
   type HabitDefinition,
   type HabitId,
   type HistorySummary,
+  type MovementIntensity,
+  type MovementSession,
+  type MovementSessionDraft,
   type RoutineExercise,
   type StrengthRoutine,
   type ResolvedRoutineExercise,
   type ResolvedStrengthRoutine,
   type RhythmEntry,
   type TabKey,
+  type TodayState,
   type TodayTimelineEvent,
   clampBreathPattern,
   createDefaultExercises,
@@ -36,8 +44,17 @@ import {
   getActiveBreathPhases,
   getBreathPattern,
   getBreathPhaseDuration,
+  isKnownMovementType,
   makeLocalId,
+  monthDayKeys,
+  monthKeyOf,
+  movementTypeLabel,
+  parseMovementMinutes,
+  shiftDayKey,
+  shiftMonthKey,
   toDayKey,
+  weekDayKeys,
+  weekStartDayKey,
 } from './domain'
 import {
   STORAGE_NOTICES,
@@ -65,7 +82,7 @@ type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'st
   }
 }
 
-interface HistoryDailySummary {
+export interface HistoryDailySummary {
   rhythmTotalMinutes: number
   rhythmEntriesCount: number
   breathSessionsCount: number
@@ -73,6 +90,25 @@ interface HistoryDailySummary {
   strengthSummary: string
   mindfulEatingCompleted: boolean
   earlySleepCompleted: boolean
+  foundation: { id: FoundationItemId; label: string; completedAt: string | null }[]
+  foundationCompletedCount: number
+  movementSessions: MovementSession[]
+  movementTotalMinutes: number
+}
+
+export type HistoryPeriodKind = 'day' | 'week' | 'month'
+
+export interface HistoryPeriodNavigation {
+  /** dayKey for 'day', Monday dayKey for 'week', 'YYYY-MM' for 'month'. */
+  key: string
+  canGoBack: boolean
+  canGoForward: boolean
+  isCurrent: boolean
+}
+
+export interface MovementDefaults {
+  durationMinutes: number
+  intensity: MovementIntensity
 }
 
 interface AppActions {
@@ -89,6 +125,10 @@ interface AppActions {
   setBreathSoundEnabled: (isEnabled: boolean) => void
   toggleHabit: (habitId: HabitId) => void
   toggleStrengthExercise: (exerciseId: string) => void
+  toggleFoundationItem: (itemId: FoundationItemId) => void
+  addMovementSession: (draft: MovementSessionDraft) => void
+  updateMovementSession: (dayKey: string, sessionId: string, draft: MovementSessionDraft) => void
+  deleteMovementSession: (dayKey: string, sessionId: string) => void
   saveHabit: (habit: HabitDefinition) => void
   saveExercise: (exercise: ExerciseDefinition) => void
   saveStrengthRoutine: (routine: StrengthRoutine) => void
@@ -119,8 +159,12 @@ export interface HealthRhythmViewModel extends AppActions {
   historyDailySummary: (dayKey: string) => HistoryDailySummary
   historyWeekSummary: HistorySummary
   historyMonthSummary: HistorySummary
+  movementDefaultsFor: (typeId: string) => MovementDefaults
   selectedHistoryDayKey: string
   setSelectedHistoryDayKey: (dayKey: string) => void
+  historyNavigation: Record<HistoryPeriodKind, HistoryPeriodNavigation>
+  stepHistoryPeriod: (kind: HistoryPeriodKind, delta: -1 | 1) => void
+  resetHistoryPeriod: (kind: HistoryPeriodKind) => void
   storageNotice: StorageNotice | null
   dismissStorageNotice: () => void
 }
@@ -128,7 +172,12 @@ export interface HealthRhythmViewModel extends AppActions {
 export function useHealthRhythmApp(): HealthRhythmViewModel {
   const [initialLoad] = useState(() => loadPersistedState(new Date()))
   const [state, setState] = useState<AppState>(initialLoad.state)
-  const [selectedHistoryDayKey, setSelectedHistoryDayKey] = useState(() => state.currentDayKey)
+  // History selections are view state only; they are never persisted.
+  const [selectedHistoryKeys, setSelectedHistoryKeys] = useState<Record<HistoryPeriodKind, string>>(() => ({
+    day: state.currentDayKey,
+    week: periodKeyFor('week', state.currentDayKey),
+    month: periodKeyFor('month', state.currentDayKey),
+  }))
   const storageNotice = useSyncExternalStore(subscribeStorageNotice, getStorageNotice)
   const metronomeRef = useRef(new WebMetronome())
   const breathCuePlayerRef = useRef(new BreathCuePlayer())
@@ -388,6 +437,20 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         })
       })
     },
+    toggleFoundationItem(itemId) {
+      setState((current) => toggleFoundationItemState(ensureCurrentDay(current, new Date()), itemId, new Date()))
+    },
+    addMovementSession(draft) {
+      setState((current) => addMovementSessionState(ensureCurrentDay(current, new Date()), draft, new Date()))
+    },
+    updateMovementSession(dayKey, sessionId, draft) {
+      setState((current) =>
+        updateMovementSessionState(ensureCurrentDay(current, new Date()), dayKey, sessionId, draft),
+      )
+    },
+    deleteMovementSession(dayKey, sessionId) {
+      setState((current) => deleteMovementSessionState(ensureCurrentDay(current, new Date()), dayKey, sessionId))
+    },
     saveHabit(habit) {
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
@@ -520,10 +583,22 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   const derived = useMemo(() => {
     const visibleTodayHabits = nextVisibleTodayHabits(state.library.habits)
     const strengthRoutines = resolveStrengthRoutines(state.library.exercises, state.strength.routines)
-    const historyWeekSummary = buildHistorySummary(state.history, currentIntervalDayKeys('week', new Date()))
+    const earliestDayKey = historyEarliestDayKey(state)
+    const historyNavigation = Object.fromEntries(
+      HISTORY_PERIOD_KINDS.map((kind) => [
+        kind,
+        getPeriodNavigation(kind, selectedHistoryKeys[kind], earliestDayKey, state.currentDayKey),
+      ]),
+    ) as Record<HistoryPeriodKind, HistoryPeriodNavigation>
+    const historyWeekSummary = buildHistorySummary(
+      state.history,
+      weekDayKeys(historyNavigation.week.key),
+      state.currentDayKey,
+    )
     const historyMonthSummary = buildHistorySummary(
       state.history,
-      currentIntervalDayKeys('month', new Date()),
+      monthDayKeys(historyNavigation.month.key),
+      state.currentDayKey,
     )
 
     return {
@@ -542,16 +617,33 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       strengthCompletedCountToday: state.strength.completedExerciseIds.length,
       strengthSummaryToday: buildStrengthSummary(state.strength.completedExerciseIds, strengthRoutines),
       todayTimeline: buildTodayTimeline(state, visibleTodayHabits, strengthRoutines),
+      earliestDayKey,
+      historyNavigation,
       historyWeekSummary,
       historyMonthSummary,
     }
-  }, [state])
+  }, [state, selectedHistoryKeys])
+
+  const { earliestDayKey, historyNavigation } = derived
 
   return {
     state,
-    selectedHistoryDayKey:
-      selectedHistoryDayKey > state.currentDayKey ? state.currentDayKey : selectedHistoryDayKey,
-    setSelectedHistoryDayKey,
+    selectedHistoryDayKey: historyNavigation.day.key,
+    setSelectedHistoryDayKey: (dayKey) => {
+      // The iOS date picker's Clear button reports ''; keep the current day instead.
+      if (dayKey) {
+        setSelectedHistoryKeys((current) => ({ ...current, day: dayKey }))
+      }
+    },
+    historyNavigation,
+    stepHistoryPeriod: (kind, delta) =>
+      setSelectedHistoryKeys((current) => ({
+        ...current,
+        // From the latest selection, so taps landing before a re-render each count.
+        [kind]: stepPeriodKey(kind, current[kind], delta, earliestDayKey, state.currentDayKey),
+      })),
+    resetHistoryPeriod: (kind) =>
+      setSelectedHistoryKeys((current) => ({ ...current, [kind]: periodKeyFor(kind, state.currentDayKey) })),
     storageNotice,
     dismissStorageNotice,
     visibleTodayHabits: derived.visibleTodayHabits,
@@ -563,6 +655,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       buildDailyHistorySummary(recordForDay(state.history, dayKey), derived.strengthRoutines),
     historyWeekSummary: derived.historyWeekSummary,
     historyMonthSummary: derived.historyMonthSummary,
+    movementDefaultsFor: (typeId) => movementDefaultsFor(state, typeId),
     rhythmRemainingSeconds: derived.rhythmRemainingSeconds,
     rhythmTotalMinutesToday: derived.rhythmTotalMinutesToday,
     breathTotalRoundsToday: derived.breathTotalRoundsToday,
@@ -664,11 +757,25 @@ function assertStoredStateShape(value: unknown): asserts value is AppState | Leg
   if (!isRecord(breath.customPattern)) return fail('breath.customPattern')
 
   if (!isRecord(today) || !isRecord(today.completionTimesByHabitId)) return fail('today')
+  // Added after v3 shipped: absent in older saves (defaulted by migrateState), never malformed.
+  if (today.foundationCompletedAt !== undefined && !isRecord(today.foundationCompletedAt)) {
+    return fail('today.foundationCompletedAt')
+  }
+  if (today.movementSessions !== undefined && !Array.isArray(today.movementSessions)) {
+    return fail('today.movementSessions')
+  }
 
   if (!isRecord(strength) || !Array.isArray(strength.completedExerciseIds)) return fail('strength')
   if (strength.routines !== undefined && !Array.isArray(strength.routines)) return fail('strength.routines')
 
   if (history !== undefined && !Array.isArray(history)) return fail('history')
+  for (const record of history ?? []) {
+    if (!isRecord(record)) continue
+    if (record.foundation !== undefined && !isRecord(record.foundation)) return fail('history.foundation')
+    if (record.movementSessions !== undefined && !Array.isArray(record.movementSessions)) {
+      return fail('history.movementSessions')
+    }
+  }
 
   if (value.version === 3) {
     if (!isRecord(library) || !Array.isArray(library.habits) || !Array.isArray(library.exercises)) {
@@ -683,10 +790,8 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     const state = rawState as AppState
     return {
       ...state,
-      today: {
-        completionTimesByHabitId: state.today.completionTimesByHabitId,
-        eventsByHabitId: state.today.eventsByHabitId ?? {},
-      },
+      today: normalizeTodayState(state.today),
+      history: (state.history ?? []).map(normalizeDayRecord),
       strength: {
         ...state.strength,
         routines: mergeBuiltInRoutines(state.strength.routines),
@@ -705,7 +810,7 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     selectedTab: legacy.selectedTab ?? 'rhythm',
     rhythm: legacy.rhythm,
     breath: legacy.breath,
-    today: { ...legacy.today, eventsByHabitId: legacy.today.eventsByHabitId ?? {} },
+    today: normalizeTodayState(legacy.today),
     strength: {
       completedExerciseIds: legacy.strength.completedExerciseIds,
       lastUpdatedAt: legacy.strength.lastUpdatedAt,
@@ -715,8 +820,30 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
       habits: createDefaultHabits(),
       exercises: createDefaultExercises(),
     },
-    history: legacy.history ?? [],
+    history: (legacy.history ?? []).map(normalizeDayRecord),
   })
+}
+
+// Fields added after a save was written get safe empty defaults; existing values are kept as-is.
+function normalizeTodayState(today: Partial<TodayState> & Pick<TodayState, 'completionTimesByHabitId'>): TodayState {
+  return {
+    ...today,
+    completionTimesByHabitId: today.completionTimesByHabitId,
+    eventsByHabitId: today.eventsByHabitId ?? {},
+    foundationCompletedAt: today.foundationCompletedAt ?? {},
+    movementSessions: today.movementSessions ?? [],
+  }
+}
+
+function normalizeDayRecord(record: DayRecord): DayRecord {
+  if (!isRecord(record)) {
+    return record
+  }
+  return {
+    ...record,
+    foundation: record.foundation ?? {},
+    movementSessions: record.movementSessions ?? [],
+  }
 }
 
 export function saveState(state: AppState) {
@@ -768,6 +895,8 @@ export function ensureCurrentDay(state: AppState, now: Date): AppState {
     today: {
       completionTimesByHabitId: {},
       eventsByHabitId: {},
+      foundationCompletedAt: {},
+      movementSessions: [],
     },
     strength: {
       ...refreshed.strength,
@@ -1202,6 +1331,8 @@ function syncHistory(state: AppState): AppState {
   currentRecord.strengthCompletedExerciseIds = state.strength.completedExerciseIds
   currentRecord.strengthLastUpdatedAt = state.strength.lastUpdatedAt
   currentRecord.habits = state.today.completionTimesByHabitId
+  currentRecord.foundation = state.today.foundationCompletedAt
+  currentRecord.movementSessions = state.today.movementSessions
 
   const history = [...state.history.filter((record) => record.dayKey !== state.currentDayKey), currentRecord].sort((left, right) =>
     left.dayKey < right.dayKey ? 1 : -1,
@@ -1211,6 +1342,117 @@ function syncHistory(state: AppState): AppState {
     ...state,
     history,
   }
+}
+
+export function toggleFoundationItemState(state: AppState, itemId: FoundationItemId, now: Date): AppState {
+  if (!FOUNDATION_ITEMS.some((item) => item.id === itemId)) {
+    return state
+  }
+
+  const foundationCompletedAt = { ...state.today.foundationCompletedAt }
+  if (foundationCompletedAt[itemId]) {
+    delete foundationCompletedAt[itemId]
+  } else {
+    foundationCompletedAt[itemId] = now.toISOString()
+  }
+
+  return syncHistory({ ...state, today: { ...state.today, foundationCompletedAt } })
+}
+
+const MOVEMENT_INTENSITIES = Object.keys(MOVEMENT_INTENSITY_LABELS) as MovementIntensity[]
+
+function sanitizeMovementDraft(draft: MovementSessionDraft): Omit<MovementSession, 'id' | 'loggedAt'> | null {
+  const durationMinutes = parseMovementMinutes(draft.durationMinutes)
+  if (durationMinutes === null || typeof draft.typeId !== 'string' || !draft.typeId) {
+    return null
+  }
+
+  const note = draft.note?.trim()
+  return {
+    typeId: draft.typeId,
+    durationMinutes,
+    ...(draft.intensity && MOVEMENT_INTENSITIES.includes(draft.intensity) ? { intensity: draft.intensity } : {}),
+    ...(note ? { note } : {}),
+  }
+}
+
+export function addMovementSessionState(state: AppState, draft: MovementSessionDraft, now: Date): AppState {
+  const fields = sanitizeMovementDraft(draft)
+  if (!fields || !isKnownMovementType(fields.typeId)) {
+    return state
+  }
+
+  const session: MovementSession = { id: makeLocalId('movement'), loggedAt: now.toISOString(), ...fields }
+  return syncHistory({
+    ...state,
+    today: { ...state.today, movementSessions: [...state.today.movementSessions, session] },
+  })
+}
+
+export function updateMovementSessionState(
+  state: AppState,
+  dayKey: string,
+  sessionId: string,
+  draft: MovementSessionDraft,
+): AppState {
+  const fields = sanitizeMovementDraft(draft)
+  if (!fields) {
+    return state
+  }
+
+  return mapMovementSessionsForDay(state, dayKey, (sessions) =>
+    sessions.map((session) => {
+      // A retired type may be kept on its own record, but never newly assigned.
+      if (session.id !== sessionId || (!isKnownMovementType(fields.typeId) && fields.typeId !== session.typeId)) {
+        return session
+      }
+      return { id: session.id, loggedAt: session.loggedAt, ...fields }
+    }),
+  )
+}
+
+export function deleteMovementSessionState(state: AppState, dayKey: string, sessionId: string): AppState {
+  return mapMovementSessionsForDay(state, dayKey, (sessions) => sessions.filter((session) => session.id !== sessionId))
+}
+
+// Today's sessions live in state.today (syncHistory mirrors them into history); earlier days
+// are edited in their history record directly.
+function mapMovementSessionsForDay(
+  state: AppState,
+  dayKey: string,
+  transform: (sessions: MovementSession[]) => MovementSession[],
+): AppState {
+  if (dayKey === state.currentDayKey) {
+    return syncHistory({
+      ...state,
+      today: { ...state.today, movementSessions: transform(state.today.movementSessions) },
+    })
+  }
+
+  if (!state.history.some((record) => record.dayKey === dayKey)) {
+    return state
+  }
+
+  return syncHistory({
+    ...state,
+    history: state.history.map((record) =>
+      record.dayKey === dayKey ? { ...record, movementSessions: transform(record.movementSessions) } : record,
+    ),
+  })
+}
+
+/** Pre-fill for the quick log: the most recent session of this type, else the type's default. */
+export function movementDefaultsFor(state: AppState, typeId: string): MovementDefaults {
+  const records = [...state.history].sort((left, right) => (left.dayKey < right.dayKey ? 1 : -1))
+  for (const record of records) {
+    const latest = record.movementSessions.findLast((session) => session.typeId === typeId)
+    if (latest) {
+      return { durationMinutes: latest.durationMinutes, intensity: latest.intensity ?? 'moderate' }
+    }
+  }
+
+  const type = MOVEMENT_TYPES.find((candidate) => candidate.id === typeId)
+  return { durationMinutes: type?.defaultMinutes ?? 30, intensity: 'moderate' }
 }
 
 function resolveStrengthRoutines(
@@ -1277,6 +1519,14 @@ export function buildTodayTimeline(
       summary: `${entry.completedRounds} round${entry.completedRounds === 1 ? '' : 's'}`,
       detail: `${BREATH_MODE_LABELS[entry.mode]} pattern ${entry.pattern.inhale}-${entry.pattern.hold}-${entry.pattern.exhale}-${entry.pattern.endHold} · ${formatDurationMinutes(entry.totalDurationSeconds)}.`,
       kind: 'breath' as const,
+    })),
+    ...state.today.movementSessions.map((session) => ({
+      id: `movement-${session.id}`,
+      timestamp: session.loggedAt,
+      title: movementTypeLabel(session.typeId),
+      summary: `${session.durationMinutes} 分钟`,
+      detail: movementDetail(session),
+      kind: 'movement' as const,
     })),
     ...(state.strength.completedExerciseIds.length > 0 && state.strength.lastUpdatedAt
       ? [
@@ -1352,6 +1602,11 @@ export function buildTodayTimeline(
   })
 }
 
+function movementDetail(session: MovementSession) {
+  const parts = [session.intensity ? MOVEMENT_INTENSITY_LABELS[session.intensity] : '', session.note ?? '']
+  return parts.filter(Boolean).join(' · ') || undefined
+}
+
 function buildStrengthSummary(completedExerciseIds: string[], routines: ResolvedStrengthRoutine[]) {
   if (completedExerciseIds.length === 0) {
     return 'Not done'
@@ -1377,7 +1632,16 @@ function buildStrengthDetail(completedExerciseIds: string[], routines: ResolvedS
     .join(', ')
 }
 
-function buildDailyHistorySummary(record: DayRecord, routines: ResolvedStrengthRoutine[]): HistoryDailySummary {
+export function buildDailyHistorySummary(record: DayRecord, routines: ResolvedStrengthRoutine[]): HistoryDailySummary {
+  const foundation = FOUNDATION_ITEMS.map((item) => ({
+    id: item.id,
+    label: item.label,
+    completedAt: record.foundation[item.id] ?? null,
+  }))
+  const movementSessions = [...record.movementSessions].sort((left, right) =>
+    left.loggedAt < right.loggedAt ? -1 : left.loggedAt > right.loggedAt ? 1 : 0,
+  )
+
   return {
     rhythmTotalMinutes: record.rhythmEntries.reduce(
       (total, entry) => total + displayMinutes(entry.durationSeconds),
@@ -1389,34 +1653,102 @@ function buildDailyHistorySummary(record: DayRecord, routines: ResolvedStrengthR
     strengthSummary: buildStrengthSummary(record.strengthCompletedExerciseIds, routines),
     mindfulEatingCompleted: Boolean(record.habits[BUILT_IN_HABIT_IDS.mindfulEating]),
     earlySleepCompleted: Boolean(record.habits[BUILT_IN_HABIT_IDS.earlySleep]),
+    foundation,
+    foundationCompletedCount: foundation.filter((item) => item.completedAt).length,
+    movementSessions,
+    movementTotalMinutes: movementSessions.reduce((total, session) => total + session.durationMinutes, 0),
   }
 }
 
-function currentIntervalDayKeys(kind: 'week' | 'month', now: Date) {
-  const keys: string[] = []
-  if (kind === 'week') {
-    const current = new Date(now)
-    const day = current.getDay()
-    const diffToMonday = day === 0 ? -6 : 1 - day
-    current.setHours(12, 0, 0, 0)
-    current.setDate(current.getDate() + diffToMonday)
-    for (let index = 0; index < 7; index += 1) {
-      keys.push(toDayKey(current))
-      current.setDate(current.getDate() + 1)
-    }
-    return keys
-  }
-
-  const current = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0, 0)
-  while (current.getMonth() === now.getMonth()) {
-    keys.push(toDayKey(current))
-    current.setDate(current.getDate() + 1)
-  }
-  return keys
+function foundationCountForRecord(record: DayRecord) {
+  return FOUNDATION_ITEMS.filter((item) => Boolean(record.foundation[item.id])).length
 }
 
-function buildHistorySummary(history: DayRecord[], dayKeys: string[]): HistorySummary {
+const HISTORY_PERIOD_KINDS: HistoryPeriodKind[] = ['day', 'week', 'month']
+
+function periodKeyFor(kind: HistoryPeriodKind, dayKey: string) {
+  switch (kind) {
+    case 'day':
+      return dayKey
+    case 'week':
+      return weekStartDayKey(dayKey)
+    case 'month':
+      return monthKeyOf(dayKey)
+  }
+}
+
+function shiftPeriodKey(kind: HistoryPeriodKind, key: string, delta: number) {
+  switch (kind) {
+    case 'day':
+      return shiftDayKey(key, delta)
+    case 'week':
+      return shiftDayKey(key, delta * 7)
+    case 'month':
+      return shiftMonthKey(key, delta)
+  }
+}
+
+/** The first day History can usefully show: the oldest stored record, or today. */
+export function historyEarliestDayKey(state: AppState) {
+  return state.history.reduce(
+    (earliest, record) => (record.dayKey < earliest ? record.dayKey : earliest),
+    state.currentDayKey,
+  )
+}
+
+/**
+ * Back stops at the period holding the oldest record; forward stops at the current period.
+ * A key beyond the current period (e.g. after the clock moved back) is pulled back to it.
+ */
+export function getPeriodNavigation(
+  kind: HistoryPeriodKind,
+  key: string,
+  earliestDayKey: string,
+  currentDayKey: string,
+): HistoryPeriodNavigation {
+  const latest = periodKeyFor(kind, currentDayKey)
+  const clampedKey = key > latest ? latest : key
+  return {
+    key: clampedKey,
+    canGoBack: clampedKey > periodKeyFor(kind, earliestDayKey),
+    canGoForward: clampedKey < latest,
+    isCurrent: clampedKey === latest,
+  }
+}
+
+export function stepPeriodKey(
+  kind: HistoryPeriodKind,
+  key: string,
+  delta: -1 | 1,
+  earliestDayKey: string,
+  currentDayKey: string,
+) {
+  const navigation = getPeriodNavigation(kind, key, earliestDayKey, currentDayKey)
+  if ((delta < 0 && !navigation.canGoBack) || (delta > 0 && !navigation.canGoForward)) {
+    return navigation.key
+  }
+  return shiftPeriodKey(kind, navigation.key, delta)
+}
+
+export function buildHistorySummary(
+  history: DayRecord[],
+  dayKeys: string[],
+  // Days after this are still ahead and do not count towards completion rates.
+  currentDayKey?: string,
+): HistorySummary {
   const matchingRecords = history.filter((record) => dayKeys.includes(record.dayKey))
+  const elapsedDaysCount = currentDayKey
+    ? dayKeys.filter((dayKey) => dayKey <= currentDayKey).length
+    : dayKeys.length
+  const movementSessions = matchingRecords.flatMap((record) => record.movementSessions)
+  const movementTypeIds = [
+    ...MOVEMENT_TYPES.map((type) => type.id),
+    ...new Set(movementSessions.map((session) => session.typeId).filter((typeId) => !isKnownMovementType(typeId))),
+  ]
+  const foundationDailyCounts = dayKeys.map((dayKey) => {
+    const record = matchingRecords.find((candidate) => candidate.dayKey === dayKey)
+    return { dayKey, completedCount: record ? foundationCountForRecord(record) : 0 }
+  })
 
   return {
     totalRhythmMinutes: matchingRecords.reduce(
@@ -1429,6 +1761,28 @@ function buildHistorySummary(history: DayRecord[], dayKeys: string[]): HistorySu
     strengthDaysCount: matchingRecords.filter((record) => record.strengthCompletedExerciseIds.length > 0).length,
     mindfulEatingDaysCount: matchingRecords.filter((record) => Boolean(record.habits[BUILT_IN_HABIT_IDS.mindfulEating])).length,
     earlySleepDaysCount: matchingRecords.filter((record) => Boolean(record.habits[BUILT_IN_HABIT_IDS.earlySleep])).length,
+    foundationDaysById: Object.fromEntries(
+      FOUNDATION_ITEMS.map((item) => [
+        item.id,
+        matchingRecords.filter((record) => Boolean(record.foundation[item.id])).length,
+      ]),
+    ) as Record<FoundationItemId, number>,
+    elapsedDaysCount,
+    foundationCompletedCount: foundationDailyCounts.reduce((total, day) => total + day.completedCount, 0),
+    foundationPossibleCount: elapsedDaysCount * FOUNDATION_ITEMS.length,
+    foundationFullDaysCount: foundationDailyCounts.filter((day) => day.completedCount === FOUNDATION_ITEMS.length)
+      .length,
+    foundationDailyCounts,
+    movementSessionsCount: movementSessions.length,
+    movementTotalMinutes: movementSessions.reduce((total, session) => total + session.durationMinutes, 0),
+    movementByType: movementTypeIds.map((typeId) => {
+      const sessions = movementSessions.filter((session) => session.typeId === typeId)
+      return {
+        typeId,
+        sessionsCount: sessions.length,
+        totalMinutes: sessions.reduce((total, session) => total + session.durationMinutes, 0),
+      }
+    }),
   }
 }
 
