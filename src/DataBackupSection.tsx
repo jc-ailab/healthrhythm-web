@@ -159,6 +159,7 @@ export function DataBackupSection({
             className="visually-hidden"
             type="file"
             aria-label="选择要导入的文件"
+            disabled={Boolean(blockedReason)}
             onChange={(event) => {
               const file = event.target.files?.[0]
               // Reset so choosing the same file again still triggers a change.
