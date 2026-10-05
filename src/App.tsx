@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 
 import './styles.css'
+import { DataBackupSection } from './DataBackupSection'
 import {
   BREATH_MODE_LABELS,
   BREATH_PHASE_LABELS,
@@ -45,7 +46,7 @@ import {
   type MovementDefaults,
 } from './lib/state'
 
-type LibrarySection = 'habits' | 'exercises' | 'routines'
+type LibrarySection = 'habits' | 'exercises' | 'routines' | 'data'
 
 type RoutineDraft = {
   id?: string
@@ -239,6 +240,9 @@ function App() {
         {selectedTab === 'library' && (
           <LibraryTab
             section={librarySection}
+            dataPanel={
+              <DataBackupSection state={app.state} canPersist={app.canPersist} onReplace={app.replaceAppState} />
+            }
             habits={app.habitLibrary}
             exercises={app.exerciseLibrary}
             routines={app.strengthRoutineLibrary}
@@ -1441,6 +1445,7 @@ function StrengthTab(props: StrengthTabProps) {
 
 interface LibraryTabProps {
   section: LibrarySection
+  dataPanel: ReactNode
   habits: HabitDefinition[]
   exercises: ExerciseDefinition[]
   routines: StrengthRoutine[]
@@ -1502,10 +1507,19 @@ function LibraryTab(props: LibraryTabProps) {
           >
             Routines
           </button>
+          <button
+            type="button"
+            className={`chip${props.section === 'data' ? ' is-active' : ''}`}
+            onClick={() => props.onSelectSection('data')}
+          >
+            数据与备份
+          </button>
         </div>
       </Card>
 
-      {props.section === 'habits' ? (
+      {props.section === 'data' ? (
+        props.dataPanel
+      ) : props.section === 'habits' ? (
         <>
           <Card>
             <SectionHeader
