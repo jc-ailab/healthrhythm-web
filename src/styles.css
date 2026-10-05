@@ -640,6 +640,15 @@
     padding: 0 2px;
     font-size: 0.8rem;
   }
+
+  /* Bold would widen "Strength" past its equal-width button; a hairline shadow reads as
+     bold without changing the text width. */
+  .tab-button.is-active {
+    font-weight: inherit;
+    text-shadow:
+      0.35px 0 0 currentColor,
+      -0.35px 0 0 currentColor;
+  }
 }
 
 @media (max-width: 380px) {

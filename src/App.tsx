@@ -890,7 +890,16 @@ function HistoryTab(props: HistoryTabProps) {
               value={`${day.breathSessionsCount} session${day.breathSessionsCount === 1 ? '' : 's'} · ${day.breathRoundsCount} rounds`}
             />
             <HistoryMetric label="Strength" value={day.strengthSummary} />
-            <HistoryMetric label="Mindful eating" value={day.mindfulEatingCompleted ? 'Done' : 'Not done'} />
+            <HistoryMetric
+              label="Mindful eating"
+              value={
+                day.mindfulEatingCaptureCount > 0
+                  ? `Done · ${day.mindfulEatingCaptureCount}×`
+                  : day.mindfulEatingCompleted
+                    ? 'Done'
+                    : 'Not done'
+              }
+            />
             <HistoryMetric label="Early sleep" value={day.earlySleepCompleted ? 'Done' : 'Not done'} />
           </div>
         </div>

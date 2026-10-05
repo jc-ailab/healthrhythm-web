@@ -161,6 +161,7 @@ function hasContent(record: DayRecord) {
     record.breathSessions.length > 0 ||
     record.strengthCompletedExerciseIds.length > 0 ||
     Object.keys(record.habits).length > 0 ||
+    Object.values(record.habitEvents).some((events) => (events?.length ?? 0) > 0) ||
     Object.keys(record.foundation).length > 0 ||
     record.movementSessions.length > 0
   )
@@ -203,6 +204,15 @@ function checkTimestampMap(value: unknown, field: string) {
   }
 }
 
+function checkEventsMap(value: unknown, field: string) {
+  if (
+    !isRecord(value) ||
+    !Object.values(value).every((events) => events === undefined || (Array.isArray(events) && events.every(isString)))
+  ) {
+    fail(field)
+  }
+}
+
 const isRhythmEntry = (entry: Record<string, unknown>) =>
   isString(entry.id) && isString(entry.startAt) && isString(entry.endAt) && isFiniteNumber(entry.durationSeconds)
 
@@ -230,14 +240,7 @@ function assertUsableState(state: AppState) {
 
   checkTimestampMap(state.today.completionTimesByHabitId, 'today.completionTimesByHabitId')
   checkTimestampMap(state.today.foundationCompletedAt, 'today.foundationCompletedAt')
-  if (
-    !isRecord(state.today.eventsByHabitId) ||
-    !Object.values(state.today.eventsByHabitId).every(
-      (events) => events === undefined || (Array.isArray(events) && events.every(isString)),
-    )
-  ) {
-    fail('today.eventsByHabitId')
-  }
+  checkEventsMap(state.today.eventsByHabitId, 'today.eventsByHabitId')
   checkArray(state.today.movementSessions, 'today.movementSessions', isMovementSession)
 
   if (!state.strength.completedExerciseIds.every(isString)) fail('strength.completedExerciseIds')
@@ -259,6 +262,7 @@ function assertUsableState(state: AppState) {
     checkArray(record.breathSessions, `history ${record.dayKey} breath`, isBreathSession)
     checkArray(record.movementSessions, `history ${record.dayKey} movement`, isMovementSession)
     checkTimestampMap(record.habits, `history ${record.dayKey} habits`)
+    checkEventsMap(record.habitEvents, `history ${record.dayKey} habitEvents`)
     checkTimestampMap(record.foundation, `history ${record.dayKey} foundation`)
     return Array.isArray(record.strengthCompletedExerciseIds) && record.strengthCompletedExerciseIds.every(isString)
   })

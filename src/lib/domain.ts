@@ -101,6 +101,8 @@ export interface DayRecord {
   strengthCompletedExerciseIds: string[]
   strengthLastUpdatedAt: string | null
   habits: Partial<Record<HabitId, string>>
+  /** Capture times for multi-capture habits (see MULTI_CAPTURE_HABIT_IDS). */
+  habitEvents: Partial<Record<HabitId, string[]>>
   foundation: Partial<Record<FoundationItemId, string>>
   movementSessions: MovementSession[]
 }
@@ -558,6 +560,7 @@ export function createEmptyDayRecord(dayKey: string): DayRecord {
     strengthCompletedExerciseIds: [],
     strengthLastUpdatedAt: null,
     habits: {},
+    habitEvents: {},
     foundation: {},
     movementSessions: [],
   }

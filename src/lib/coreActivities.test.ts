@@ -68,6 +68,7 @@ function pastRecord(dayKey: string, overrides: Partial<DayRecord> = {}): DayReco
     strengthCompletedExerciseIds: [],
     strengthLastUpdatedAt: null,
     habits: {},
+    habitEvents: {},
     foundation: {},
     movementSessions: [],
     ...overrides,
