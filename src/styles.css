@@ -664,6 +664,10 @@
     grid-column: 1 / -1;
   }
 
+  .page-grid > .span-full {
+    grid-column: 1 / -1;
+  }
+
   .two-column-cards {
     grid-template-columns: 1fr 1fr;
   }
@@ -812,7 +816,7 @@
 
 .today-summary-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 4px;
 }
@@ -999,4 +1003,285 @@
   border-radius: 10px;
   background: transparent;
   color: inherit;
+}
+
+/* ─── Daily foundation (每日基础) ──────────────────────────────────────────── */
+
+.foundation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.foundation-count {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  flex: none;
+}
+
+.foundation-count strong {
+  color: #21422f;
+  font-size: 1.5rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.foundation-meter {
+  display: flex;
+  gap: 3px;
+}
+
+.foundation-meter span {
+  width: 14px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e1e5dc;
+}
+
+.foundation-meter span.is-on {
+  background: #7fb08d;
+}
+
+.foundation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.foundation-tile {
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(96, 117, 103, 0.18);
+  background: #faf8f2;
+  color: #314236;
+  text-align: left;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 80ms ease;
+}
+
+.foundation-tile:active {
+  transform: scale(0.97);
+}
+
+.foundation-tile strong {
+  color: #24312a;
+  font-size: 0.98rem;
+}
+
+.foundation-tile span {
+  color: #6e7c74;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.foundation-tile.is-complete {
+  background: #eef4ef;
+  border-color: rgba(94, 129, 106, 0.32);
+}
+
+.foundation-tile.is-complete strong,
+.foundation-tile.is-complete span {
+  color: #2d5a3e;
+}
+
+.foundation-badges {
+  margin: 4px 0 2px;
+}
+
+/* ─── Movement sessions (运动) ─────────────────────────────────────────────── */
+
+.movement-form {
+  display: grid;
+  gap: 10px;
+}
+
+.movement-duration-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.movement-duration-row .chip {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 4px;
+}
+
+.movement-minutes-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  color: #5f6d65;
+  font-size: 0.84rem;
+}
+
+/* 16px keeps iOS Safari from zooming the page when the field is focused. */
+.movement-minutes-input input,
+.movement-note-input {
+  min-height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(96, 117, 103, 0.18);
+  background: white;
+  color: #24312a;
+  font-size: 16px;
+}
+
+.movement-minutes-input input {
+  width: 64px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.movement-minutes-input input[aria-invalid='true'] {
+  border-color: rgba(180, 100, 90, 0.6);
+}
+
+.movement-note-input {
+  width: 100%;
+  padding: 0 12px;
+}
+
+.movement-hint {
+  margin: -4px 0 0;
+  color: #8c3b30;
+  font-size: 0.8rem;
+}
+
+.movement-form .primary-button:disabled {
+  opacity: 0.5;
+}
+
+.movement-list {
+  display: grid;
+}
+
+.movement-row {
+  display: grid;
+  gap: 2px;
+  padding: 8px 2px;
+  border-bottom: 1px solid rgba(96, 117, 103, 0.1);
+}
+
+.movement-row:last-child {
+  border-bottom: none;
+}
+
+.movement-row.is-editing {
+  padding: 10px;
+  border: 1px solid rgba(94, 129, 106, 0.28);
+  border-radius: 16px;
+  background: #eef4ef;
+}
+
+.movement-row-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 10px;
+}
+
+.movement-row-main .event-time {
+  white-space: nowrap;
+}
+
+.movement-note {
+  grid-column: 2 / -1;
+  margin: 0;
+  color: #5f6d65;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.movement-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.movement-row.is-editing .movement-row-actions {
+  gap: 8px;
+}
+
+.movement-row.is-editing .primary-button,
+.movement-row.is-editing .secondary-button {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+}
+
+.text-button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #3d5a49;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.text-button.is-danger {
+  background: #fdf1ef;
+  color: #8c3b30;
+}
+
+/* ─── Weekly foundation strip ──────────────────────────────────────────────── */
+
+.week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin: 6px 0 4px;
+}
+
+.week-strip-day {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  border-radius: 12px;
+  background: #f3f4ee;
+  color: #6e7c74;
+  font-size: 0.75rem;
+}
+
+.week-strip-day strong {
+  color: #24312a;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.week-strip-day.is-partial {
+  background: #e4eee6;
+}
+
+.week-strip-day.is-full {
+  background: #7fb08d;
+  color: #f4f8f4;
+}
+
+.week-strip-day.is-full strong {
+  color: white;
+}
+
+.week-strip-day.is-future {
+  opacity: 0.5;
+}
+
+@media (max-width: 360px) {
+  .movement-minutes-input input {
+    width: 54px;
+  }
+}
+
+.movement-chip-row .chip {
+  padding-inline: 4px;
 }

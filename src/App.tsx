@@ -5,24 +5,37 @@ import {
   BREATH_MODE_LABELS,
   BREATH_PHASE_LABELS,
   BREATH_ROUND_OPTIONS,
+  FOUNDATION_ITEMS,
+  MOVEMENT_DURATION_PRESETS,
+  MOVEMENT_INTENSITY_LABELS,
+  MOVEMENT_MAX_MINUTES,
+  MOVEMENT_TYPES,
   MULTI_CAPTURE_HABIT_IDS,
   RHYTHM_BPM,
   RHYTHM_DURATIONS,
   formatClockTime,
   formatCountdown,
   formatFullDate,
+  fromDayKey,
   makeLocalId,
+  movementTypeLabel,
+  parseMovementMinutes,
   type BreathMode,
   type BreathPattern,
   type BreathPhase,
   type ExerciseDefinition,
+  type FoundationItemId,
   type HabitDefinition,
+  type HistorySummary,
+  type MovementIntensity,
+  type MovementSession,
+  type MovementSessionDraft,
   type ResolvedStrengthRoutine,
   type StrengthRoutine,
   type TabKey,
   type TodayTimelineEvent,
 } from './lib/domain'
-import { useHealthRhythmApp } from './lib/state'
+import { useHealthRhythmApp, type HistoryDailySummary, type MovementDefaults } from './lib/state'
 
 type LibrarySection = 'habits' | 'exercises' | 'routines'
 
@@ -102,6 +115,11 @@ function App() {
       .filter(([, events]) => (events?.length ?? 0) > 0)
       .length
 
+  const foundationToday: FoundationTileItem[] = FOUNDATION_ITEMS.map((item) => ({
+    ...item,
+    completedAt: app.state.today.foundationCompletedAt[item.id] ?? null,
+  }))
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -173,6 +191,14 @@ function App() {
             habits={todayHabits}
             timelineEvents={app.todayTimeline}
             onToggleHabit={app.toggleHabit}
+            foundation={foundationToday}
+            onToggleFoundation={app.toggleFoundationItem}
+            dayKey={app.state.currentDayKey}
+            movementSessions={app.state.today.movementSessions}
+            movementDefaultsFor={app.movementDefaultsFor}
+            onAddMovement={app.addMovementSession}
+            onUpdateMovement={app.updateMovementSession}
+            onDeleteMovement={app.deleteMovementSession}
           />
         )}
 
@@ -184,6 +210,8 @@ function App() {
             weekSummary={app.historyWeekSummary}
             monthSummary={app.historyMonthSummary}
             onSelectDay={app.setSelectedHistoryDayKey}
+            onUpdateMovement={app.updateMovementSession}
+            onDeleteMovement={app.deleteMovementSession}
           />
         )}
 
@@ -368,6 +396,8 @@ interface TodaySummaryCompactProps {
   strengthSummary: string
   habitCompletionCount: number
   habitCount: number
+  foundationCompletedCount: number
+  movementTotalMinutes: number
 }
 
 function TodaySummaryCompact(props: TodaySummaryCompactProps) {
@@ -388,6 +418,14 @@ function TodaySummaryCompact(props: TodaySummaryCompactProps) {
       <div className="today-summary-item">
         <span>Habits</span>
         <strong>{props.habitCount > 0 ? `${props.habitCompletionCount}/${props.habitCount}` : '—'}</strong>
+      </div>
+      <div className="today-summary-item">
+        <span>基础</span>
+        <strong>{props.foundationCompletedCount}/{FOUNDATION_ITEMS.length}</strong>
+      </div>
+      <div className="today-summary-item">
+        <span>运动</span>
+        <strong>{props.movementTotalMinutes > 0 ? `${props.movementTotalMinutes} 分钟` : '—'}</strong>
       </div>
     </div>
   )
@@ -638,13 +676,55 @@ interface TodayTabProps {
   habits: (HabitDefinition & { completedAt: string | null; captureCount: number | null })[]
   timelineEvents: TodayTimelineEvent[]
   onToggleHabit: (habitId: string) => void
+  foundation: FoundationTileItem[]
+  onToggleFoundation: (itemId: FoundationItemId) => void
+  dayKey: string
+  movementSessions: MovementSession[]
+  movementDefaultsFor: (typeId: string) => MovementDefaults
+  onAddMovement: (draft: MovementSessionDraft) => void
+  onUpdateMovement: MovementUpdateHandler
+  onDeleteMovement: MovementDeleteHandler
 }
 
 function TodayTab(props: TodayTabProps) {
   const habitGroups = groupHabitsByCategory(props.habits)
+  const foundationCompletedCount = props.foundation.filter((item) => item.completedAt).length
 
   return (
     <div className="page-grid">
+      <Card className="card-compact">
+        <FoundationHeader completedCount={foundationCompletedCount} />
+        <div className="foundation-grid">
+          {props.foundation.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`foundation-tile${item.completedAt ? ' is-complete' : ''}`}
+              aria-pressed={Boolean(item.completedAt)}
+              onClick={() => props.onToggleFoundation(item.id)}
+            >
+              <strong>{item.label}</strong>
+              <span>{item.completedAt ? `✓ ${formatClockTime(item.completedAt)}` : '点按完成'}</span>
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="card-compact">
+        <SectionHeader title="运动记录" subtitle="选好项目，一键记录。" />
+        <MovementQuickLog defaultsFor={props.movementDefaultsFor} onAdd={props.onAddMovement} />
+        <div className="activity-log">
+          <div className="activity-log-label">今日运动</div>
+          <MovementSessionList
+            dayKey={props.dayKey}
+            sessions={props.movementSessions}
+            emptyText="今天还没有运动记录。"
+            onUpdate={props.onUpdateMovement}
+            onDelete={props.onDeleteMovement}
+          />
+        </div>
+      </Card>
+
       <Card className="card-compact">
         <SectionHeader title="Habit actions" />
 
@@ -687,6 +767,8 @@ function TodayTab(props: TodayTabProps) {
           strengthSummary={props.strengthSummary}
           habitCompletionCount={props.habitCompletionCount}
           habitCount={props.habits.length}
+          foundationCompletedCount={foundationCompletedCount}
+          movementTotalMinutes={props.movementSessions.reduce((total, session) => total + session.durationMinutes, 0)}
         />
       </Card>
 
@@ -719,30 +801,12 @@ function TodayTab(props: TodayTabProps) {
 interface HistoryTabProps {
   selectedDayKey: string
   maxDayKey: string
-  dailySummary: {
-    rhythmTotalMinutes: number
-    rhythmEntriesCount: number
-    breathSessionsCount: number
-    breathRoundsCount: number
-    strengthSummary: string
-    mindfulEatingCompleted: boolean
-    earlySleepCompleted: boolean
-  }
-  weekSummary: {
-    totalRhythmMinutes: number
-    rhythmDaysCount: number
-    strengthDaysCount: number
-    mindfulEatingDaysCount: number
-    earlySleepDaysCount: number
-  }
-  monthSummary: {
-    totalRhythmMinutes: number
-    rhythmDaysCount: number
-    strengthDaysCount: number
-    mindfulEatingDaysCount: number
-    earlySleepDaysCount: number
-  }
+  dailySummary: HistoryDailySummary
+  weekSummary: HistorySummary
+  monthSummary: HistorySummary
   onSelectDay: (dayKey: string) => void
+  onUpdateMovement: MovementUpdateHandler
+  onDeleteMovement: MovementDeleteHandler
 }
 
 function HistoryTab(props: HistoryTabProps) {
@@ -780,6 +844,43 @@ function HistoryTab(props: HistoryTabProps) {
         </div>
       </Card>
 
+      <Card className="card-compact">
+        <SectionHeader title="当日基础与运动" subtitle={formatDayKeyLabel(props.selectedDayKey)} />
+        <div className="metric-row">
+          <span>每日基础</span>
+          <strong>
+            {props.dailySummary.foundationCompletedCount}/{props.dailySummary.foundation.length}
+          </strong>
+        </div>
+        <div className="badge-row foundation-badges">
+          {props.dailySummary.foundation.map((item) => (
+            <span key={item.id} className={`badge${item.completedAt ? ' is-on' : ''}`}>
+              {item.completedAt ? '✓ ' : ''}
+              {item.label}
+            </span>
+          ))}
+        </div>
+
+        <div className="activity-log">
+          <div className="activity-log-label">
+            运动
+            {props.dailySummary.movementSessions.length > 0 &&
+              ` · ${props.dailySummary.movementSessions.length} 次 · ${props.dailySummary.movementTotalMinutes} 分钟`}
+          </div>
+          <MovementSessionList
+            // Remount per day so an open editor never carries over to another date.
+            key={props.selectedDayKey}
+            dayKey={props.selectedDayKey}
+            sessions={props.dailySummary.movementSessions}
+            emptyText="这一天没有运动记录。"
+            onUpdate={props.onUpdateMovement}
+            onDelete={props.onDeleteMovement}
+          />
+        </div>
+      </Card>
+
+      <WeeklyCoreSummary summary={props.weekSummary} currentDayKey={props.maxDayKey} />
+
       <div className="two-column-cards">
         <Card>
           <SectionHeader title="This week" subtitle="Simple review." />
@@ -810,6 +911,378 @@ function HistoryTab(props: HistoryTabProps) {
         </Card>
       </div>
     </div>
+  )
+}
+
+// ─── Daily foundation & movement ────────────────────────────────────────────
+
+type FoundationTileItem = { id: FoundationItemId; label: string; completedAt: string | null }
+type MovementUpdateHandler = (dayKey: string, sessionId: string, draft: MovementSessionDraft) => void
+type MovementDeleteHandler = (dayKey: string, sessionId: string) => void
+
+type MovementFormValue = {
+  typeId: string
+  durationText: string
+  intensity: MovementIntensity
+  note: string
+}
+
+const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+
+// The date input reports '' when cleared (iOS has a Clear button); formatting that would throw.
+function formatDayKeyLabel(dayKey: string) {
+  const date = fromDayKey(dayKey)
+  return Number.isNaN(date.getTime()) ? undefined : formatFullDate(date)
+}
+
+function FoundationHeader({ completedCount }: { completedCount: number }) {
+  const total = FOUNDATION_ITEMS.length
+  return (
+    <div className="foundation-header">
+      <div className="section-header">
+        <h2>每日基础</h2>
+        <p>{completedCount === total ? '今日四项已全部完成' : '核心与脊柱的日常基础练习'}</p>
+      </div>
+      <div className="foundation-count" aria-label={`今日已完成 ${completedCount}/${total}`}>
+        <strong>
+          {completedCount}/{total}
+        </strong>
+        <div className="foundation-meter" aria-hidden="true">
+          {FOUNDATION_ITEMS.map((item, index) => (
+            <span key={item.id} className={index < completedCount ? 'is-on' : ''} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function toMovementDraft(value: MovementFormValue): MovementSessionDraft | null {
+  const durationMinutes = parseMovementMinutes(value.durationText)
+  if (durationMinutes === null) {
+    return null
+  }
+  return { typeId: value.typeId, durationMinutes, intensity: value.intensity, note: value.note }
+}
+
+function MovementQuickLog({
+  defaultsFor,
+  onAdd,
+}: {
+  defaultsFor: (typeId: string) => MovementDefaults
+  onAdd: (draft: MovementSessionDraft) => void
+}) {
+  const [value, setValue] = useState<MovementFormValue>(() => {
+    const typeId = MOVEMENT_TYPES[0].id
+    const defaults = defaultsFor(typeId)
+    return { typeId, durationText: String(defaults.durationMinutes), intensity: defaults.intensity, note: '' }
+  })
+  const draft = toMovementDraft(value)
+
+  return (
+    <div className="movement-form">
+      <MovementFields
+        value={value}
+        onChange={(update) => {
+          if (update.typeId && update.typeId !== value.typeId) {
+            // Switching type pre-fills what was last logged for it.
+            const defaults = defaultsFor(update.typeId)
+            setValue({
+              ...value,
+              typeId: update.typeId,
+              durationText: String(defaults.durationMinutes),
+              intensity: defaults.intensity,
+            })
+            return
+          }
+          setValue({ ...value, ...update })
+        }}
+      />
+      <button
+        className="primary-button"
+        type="button"
+        disabled={!draft}
+        onClick={() => {
+          if (!draft) return
+          onAdd(draft)
+          setValue({ ...value, note: '' })
+        }}
+      >
+        {draft ? `记录 ${movementTypeLabel(value.typeId)} · ${draft.durationMinutes} 分钟` : '记录'}
+      </button>
+    </div>
+  )
+}
+
+function MovementFields({
+  value,
+  onChange,
+  extraTypeId,
+}: {
+  value: MovementFormValue
+  onChange: (update: Partial<MovementFormValue>) => void
+  // A retired type kept on an existing record, offered so editing does not force a change.
+  extraTypeId?: string
+}) {
+  const types = [
+    ...MOVEMENT_TYPES,
+    ...(extraTypeId && !MOVEMENT_TYPES.some((type) => type.id === extraTypeId)
+      ? [{ id: extraTypeId, label: extraTypeId }]
+      : []),
+  ]
+  const isDurationValid = parseMovementMinutes(value.durationText) !== null
+
+  return (
+    <>
+      <div className="chip-row is-single-line movement-chip-row" role="group" aria-label="运动项目">
+        {types.map((type) => (
+          <button
+            key={type.id}
+            type="button"
+            className={`chip${value.typeId === type.id ? ' is-active' : ''}`}
+            aria-pressed={value.typeId === type.id}
+            onClick={() => onChange({ typeId: type.id })}
+          >
+            {type.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="movement-duration-row" role="group" aria-label="时长">
+        {MOVEMENT_DURATION_PRESETS.map((minutes) => (
+          <button
+            key={minutes}
+            type="button"
+            className={`chip${value.durationText === String(minutes) ? ' is-active' : ''}`}
+            onClick={() => onChange({ durationText: String(minutes) })}
+          >
+            {minutes}
+          </button>
+        ))}
+        <label className="movement-minutes-input">
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MOVEMENT_MAX_MINUTES}
+            aria-label="时长（分钟）"
+            aria-invalid={!isDurationValid}
+            value={value.durationText}
+            onChange={(event) => onChange({ durationText: event.target.value })}
+          />
+          <span>分钟</span>
+        </label>
+      </div>
+      {!isDurationValid && <p className="movement-hint">请输入 1–{MOVEMENT_MAX_MINUTES} 分钟</p>}
+
+      <div className="chip-row is-single-line movement-chip-row" role="group" aria-label="强度">
+        {(Object.entries(MOVEMENT_INTENSITY_LABELS) as [MovementIntensity, string][]).map(([intensity, label]) => (
+          <button
+            key={intensity}
+            type="button"
+            className={`chip${value.intensity === intensity ? ' is-active' : ''}`}
+            aria-pressed={value.intensity === intensity}
+            onClick={() => onChange({ intensity })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <input
+        className="movement-note-input"
+        type="text"
+        maxLength={200}
+        placeholder="备注（可选）"
+        aria-label="备注"
+        value={value.note}
+        onChange={(event) => onChange({ note: event.target.value })}
+      />
+    </>
+  )
+}
+
+function MovementSessionList({
+  dayKey,
+  sessions,
+  emptyText,
+  onUpdate,
+  onDelete,
+}: {
+  dayKey: string
+  sessions: MovementSession[]
+  emptyText: string
+  onUpdate: MovementUpdateHandler
+  onDelete: MovementDeleteHandler
+}) {
+  if (sessions.length === 0) {
+    return <EmptyState text={emptyText} />
+  }
+
+  return (
+    <div className="movement-list">
+      {sessions.map((session) => (
+        <MovementSessionRow
+          key={session.id}
+          session={session}
+          onUpdate={(draft) => onUpdate(dayKey, session.id, draft)}
+          onDelete={() => onDelete(dayKey, session.id)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function MovementSessionRow({
+  session,
+  onUpdate,
+  onDelete,
+}: {
+  session: MovementSession
+  onUpdate: (draft: MovementSessionDraft) => void
+  onDelete: () => void
+}) {
+  const [editValue, setEditValue] = useState<MovementFormValue | null>(null)
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false)
+
+  if (editValue) {
+    const draft = toMovementDraft(editValue)
+    return (
+      <div className="movement-row is-editing">
+        <div className="movement-form">
+          <MovementFields
+            value={editValue}
+            extraTypeId={session.typeId}
+            onChange={(update) => setEditValue({ ...editValue, ...update })}
+          />
+          <div className="movement-row-actions">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!draft}
+              onClick={() => {
+                if (!draft) return
+                onUpdate(draft)
+                setEditValue(null)
+              }}
+            >
+              保存
+            </button>
+            <button className="secondary-button" type="button" onClick={() => setEditValue(null)}>
+              取消
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const meta = [`${session.durationMinutes} 分钟`, session.intensity ? MOVEMENT_INTENSITY_LABELS[session.intensity] : '']
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <div className="movement-row">
+      <div className="movement-row-main">
+        <span className="event-time">{formatClockTime(session.loggedAt)}</span>
+        <span className="event-title">{movementTypeLabel(session.typeId)}</span>
+        <span className="event-summary">{meta}</span>
+        {session.note && <p className="movement-note">{session.note}</p>}
+      </div>
+      <div className="movement-row-actions">
+        {isConfirmingDelete ? (
+          <>
+            <button className="text-button is-danger" type="button" onClick={onDelete}>
+              确认删除
+            </button>
+            <button className="text-button" type="button" onClick={() => setIsConfirmingDelete(false)}>
+              取消
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="text-button"
+              type="button"
+              onClick={() =>
+                setEditValue({
+                  typeId: session.typeId,
+                  durationText: String(session.durationMinutes),
+                  intensity: session.intensity ?? 'moderate',
+                  note: session.note ?? '',
+                })
+              }
+            >
+              编辑
+            </button>
+            <button className="text-button" type="button" onClick={() => setIsConfirmingDelete(true)}>
+              删除
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WeeklyCoreSummary({ summary, currentDayKey }: { summary: HistorySummary; currentDayKey: string }) {
+  // Days still ahead this week cannot count against the completion rate.
+  const elapsedDays = summary.foundationDailyCounts.filter((day) => day.dayKey <= currentDayKey).length
+  const possible = elapsedDays * FOUNDATION_ITEMS.length
+  const rate = possible > 0 ? Math.round((summary.foundationCompletedCount / possible) * 100) : 0
+
+  return (
+    <Card className="card-compact span-full">
+      <SectionHeader title="本周基础与运动" subtitle="周一至今的完成情况。" />
+
+      <div className="activity-log-label">每日基础</div>
+      <div className="week-strip">
+        {summary.foundationDailyCounts.map((day) => {
+          const isFuture = day.dayKey > currentDayKey
+          const level =
+            isFuture || day.completedCount === 0
+              ? ''
+              : day.completedCount === FOUNDATION_ITEMS.length
+                ? ' is-full'
+                : ' is-partial'
+          return (
+            <div
+              key={day.dayKey}
+              className={`week-strip-day${level}${isFuture ? ' is-future' : ''}`}
+              aria-label={`周${WEEKDAY_LABELS[fromDayKey(day.dayKey).getDay()]} ${isFuture ? '未到' : `${day.completedCount}/${FOUNDATION_ITEMS.length}`}`}
+            >
+              <span>{WEEKDAY_LABELS[fromDayKey(day.dayKey).getDay()]}</span>
+              <strong>{isFuture ? '·' : day.completedCount}</strong>
+            </div>
+          )
+        })}
+      </div>
+      <div className="metric-list">
+        <HistoryMetric
+          label="总完成"
+          value={`${summary.foundationCompletedCount}/${possible} 项次 · ${rate}%`}
+        />
+        <HistoryMetric label="四项全完成" value={`${summary.foundationFullDaysCount} 天`} />
+        {FOUNDATION_ITEMS.map((item) => (
+          <HistoryMetric key={item.id} label={item.label} value={`${summary.foundationDaysById[item.id]}/${elapsedDays} 天`} />
+        ))}
+      </div>
+
+      <div className="activity-log">
+        <div className="activity-log-label">运动</div>
+        <div className="metric-list">
+          <HistoryMetric label="运动次数" value={`${summary.movementSessionsCount} 次`} />
+          <HistoryMetric label="运动时长" value={`${summary.movementTotalMinutes} 分钟`} />
+          {summary.movementByType.map((type) => (
+            <HistoryMetric
+              key={type.typeId}
+              label={movementTypeLabel(type.typeId)}
+              value={type.sessionsCount > 0 ? `${type.sessionsCount} 次 · ${type.totalMinutes} 分钟` : '—'}
+            />
+          ))}
+        </div>
+      </div>
+    </Card>
   )
 }
 
