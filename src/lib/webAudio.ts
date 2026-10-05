@@ -11,27 +11,55 @@ function createAudioContext(): AudioContextLike | null {
   return new Context()
 }
 
+interface AudioSessionLike {
+  type: string
+}
+
+// iOS Safari plays Web Audio through an "ambient" audio session that the ring/silent switch
+// mutes, while <audio> elements (the Breath cues) use the "playback" session and are heard.
+// Opting Web Audio into "playback" makes the metronome audible without Breath playing first.
+// navigator.audioSession exists only in Safari 16.4+; other browsers ignore this.
+function preferPlaybackAudioSession() {
+  const audioSession = (navigator as Navigator & { audioSession?: AudioSessionLike }).audioSession
+  if (!audioSession || audioSession.type === 'playback') {
+    return
+  }
+
+  try {
+    audioSession.type = 'playback'
+  } catch {
+    // Never let this block the metronome itself; the context below still starts.
+  }
+}
+
 export class WebMetronome {
   private context: AudioContextLike | null = null
   private intervalId: number | null = null
   private bpm = 180
+  // Bumped by stop() so a start() still awaiting resume() cannot begin clicking after a pause.
+  private runId = 0
 
+  // Everything before the first await runs synchronously, so when called from a tap handler the
+  // session change, context creation, resume() and silent warm-up all happen inside the gesture.
   async unlock() {
+    preferPlaybackAudioSession()
     this.context = this.context ?? createAudioContext()
     if (!this.context) {
       return
     }
 
     if (this.context.state !== 'running') {
+      this.playSilentBuffer()
       await this.context.resume()
     }
   }
 
   async start(bpm: number) {
     this.bpm = bpm
+    const runId = this.runId
     await this.unlock()
 
-    if (!this.context || this.intervalId !== null) {
+    if (!this.context || this.intervalId !== null || runId !== this.runId) {
       return
     }
 
@@ -43,10 +71,22 @@ export class WebMetronome {
   }
 
   stop() {
+    this.runId += 1
     if (this.intervalId !== null) {
       window.clearInterval(this.intervalId)
       this.intervalId = null
     }
+  }
+
+  private playSilentBuffer() {
+    if (!this.context) {
+      return
+    }
+
+    const source = this.context.createBufferSource()
+    source.buffer = this.context.createBuffer(1, 1, this.context.sampleRate)
+    source.connect(this.context.destination)
+    source.start(0)
   }
 
   private playClick() {
