@@ -196,8 +196,12 @@ export interface HistorySummary {
   mindfulEatingDaysCount: number
   earlySleepDaysCount: number
   foundationDaysById: Record<FoundationItemId, number>
+  /** Days of the interval up to and including today; days still ahead are not counted against rates. */
+  elapsedDaysCount: number
   /** Item-days completed across the interval (each day contributes 0…FOUNDATION_ITEMS.length). */
   foundationCompletedCount: number
+  /** FOUNDATION_ITEMS.length × elapsedDaysCount. */
+  foundationPossibleCount: number
   foundationFullDaysCount: number
   foundationDailyCounts: { dayKey: string; completedCount: number }[]
   movementSessionsCount: number
@@ -455,7 +459,7 @@ export const FOUNDATION_ITEMS: readonly { id: FoundationItemId; label: string }[
 
 export const MOVEMENT_TYPES: readonly { id: string; label: string; defaultMinutes: number }[] = [
   { id: 'swimming', label: '游泳', defaultMinutes: 30 },
-  { id: 'zumba', label: '尊巴', defaultMinutes: 45 },
+  { id: 'zumba', label: 'Zumba', defaultMinutes: 45 },
   { id: 'yoga', label: '瑜伽', defaultMinutes: 30 },
   { id: 'jingang', label: '金刚功', defaultMinutes: 30 },
 ]
@@ -620,6 +624,40 @@ export function toDayKey(date: Date) {
 export function fromDayKey(dayKey: string) {
   const [year, month, day] = dayKey.split('-').map(Number)
   return new Date(year, month - 1, day, 12, 0, 0, 0)
+}
+
+export function shiftDayKey(dayKey: string, days: number) {
+  const date = fromDayKey(dayKey)
+  date.setDate(date.getDate() + days)
+  return toDayKey(date)
+}
+
+/** The Monday that starts the week containing dayKey. */
+export function weekStartDayKey(dayKey: string) {
+  const day = fromDayKey(dayKey).getDay()
+  return shiftDayKey(dayKey, day === 0 ? -6 : 1 - day)
+}
+
+export function weekDayKeys(weekStart: string) {
+  return Array.from({ length: 7 }, (_, index) => shiftDayKey(weekStart, index))
+}
+
+/** 'YYYY-MM' */
+export function monthKeyOf(dayKey: string) {
+  return dayKey.slice(0, 7)
+}
+
+export function shiftMonthKey(monthKey: string, months: number) {
+  const [year, month] = monthKey.split('-').map(Number)
+  return toDayKey(new Date(year, month - 1 + months, 1, 12)).slice(0, 7)
+}
+
+export function monthDayKeys(monthKey: string) {
+  const keys: string[] = []
+  for (let dayKey = `${monthKey}-01`; monthKeyOf(dayKey) === monthKey; dayKey = shiftDayKey(dayKey, 1)) {
+    keys.push(dayKey)
+  }
+  return keys
 }
 
 export function formatClockTime(value: string | Date) {

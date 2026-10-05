@@ -4,7 +4,12 @@ import {
   FOUNDATION_ITEMS,
   MOVEMENT_MAX_MINUTES,
   createInitialState,
+  monthDayKeys,
+  movementTypeLabel,
   parseMovementMinutes,
+  shiftMonthKey,
+  weekDayKeys,
+  weekStartDayKey,
   type AppState,
   type DayRecord,
   type MovementSessionDraft,
@@ -15,12 +20,14 @@ import {
   buildDailyHistorySummary,
   buildHistorySummary,
   buildTodayTimeline,
-  currentIntervalDayKeys,
   deleteMovementSessionState,
   ensureCurrentDay,
+  getPeriodNavigation,
+  historyEarliestDayKey,
   loadPersistedState,
   movementDefaultsFor,
   saveState,
+  stepPeriodKey,
   toggleFoundationItemState,
   updateMovementSessionState,
 } from './state'
@@ -118,7 +125,7 @@ describe('loading saves written before foundation and movement existed', () => {
     storage.set(STORAGE_KEY, JSON.stringify(preFeatureSave(3)))
     const { state } = loadPersistedState(at(10))
 
-    expect(() => buildHistorySummary(state.history, currentIntervalDayKeys('week', at(10)))).not.toThrow()
+    expect(() => buildHistorySummary(state.history, weekDayKeys(weekStartDayKey('2026-04-15')))).not.toThrow()
     for (const record of state.history) {
       expect(() => buildDailyHistorySummary(record, [])).not.toThrow()
     }
@@ -430,7 +437,7 @@ describe('weekly aggregation', () => {
     pastRecord('2026-04-15', { foundation: { lowerAbs: at(7).toISOString() }, movementSessions: [session('s2', 'swimming', 25)] }),
   ]
 
-  const summary = buildHistorySummary(history, currentIntervalDayKeys('week', at(10)))
+  const summary = buildHistorySummary(history, weekDayKeys(weekStartDayKey('2026-04-15')))
 
   it('counts completed days per foundation item within the week', () => {
     expect(summary.foundationDaysById).toEqual({ lowerAbs: 3, lowerBack: 1, pelvicFloor: 2, spineMobility: 1 })
@@ -470,11 +477,251 @@ describe('weekly aggregation', () => {
     state = updateMovementSessionState(state, state.currentDayKey, first.id, { typeId: 'swimming', durationMinutes: 45 })
     state = deleteMovementSessionState(state, state.currentDayKey, second.id)
 
-    const week = buildHistorySummary(state.history, currentIntervalDayKeys('week', at(10)))
+    const week = buildHistorySummary(state.history, weekDayKeys(weekStartDayKey('2026-04-15')))
 
     expect(week.movementSessionsCount).toBe(1)
     expect(week.movementTotalMinutes).toBe(45)
     expect(week.movementByType.find((type) => type.typeId === 'swimming')!.sessionsCount).toBe(1)
     expect(week.movementByType.find((type) => type.typeId === 'yoga')!.sessionsCount).toBe(0)
+  })
+})
+
+describe('date-key helpers', () => {
+  it('finds the Monday of a week, including from a Sunday', () => {
+    expect(weekStartDayKey('2026-04-15')).toBe('2026-04-13')
+    expect(weekStartDayKey('2026-04-19')).toBe('2026-04-13')
+    expect(weekStartDayKey('2026-04-13')).toBe('2026-04-13')
+    expect(weekDayKeys('2026-03-30')).toEqual([
+      '2026-03-30',
+      '2026-03-31',
+      '2026-04-01',
+      '2026-04-02',
+      '2026-04-03',
+      '2026-04-04',
+      '2026-04-05',
+    ])
+  })
+
+  it('shifts months across a year boundary and lists every day of a month', () => {
+    expect(shiftMonthKey('2026-01', -1)).toBe('2025-12')
+    expect(shiftMonthKey('2025-12', 1)).toBe('2026-01')
+    expect(monthDayKeys('2026-02')).toHaveLength(28)
+    expect(monthDayKeys('2026-03')).toHaveLength(31)
+    expect(monthDayKeys('2026-04').at(-1)).toBe('2026-04-30')
+  })
+})
+
+describe('History period navigation and aggregation', () => {
+  // Today is Wednesday 2026-04-15. Earliest record is Monday 2026-03-30.
+  const t = (dayKey: string) => `${dayKey}T07:00:00.000Z`
+  const all = (dayKey: string) => Object.fromEntries(FOUNDATION_ITEMS.map((item) => [item.id, t(dayKey)]))
+  const session = (id: string, dayKey: string, typeId: string, durationMinutes: number) => ({
+    id,
+    typeId,
+    loggedAt: t(dayKey),
+    durationMinutes,
+  })
+
+  function seededState() {
+    const state = stateAt(at(10))
+    state.history = [
+      ...state.history,
+      pastRecord('2026-03-30', {
+        foundation: all('2026-03-30'),
+        movementSessions: [session('m1', '2026-03-30', 'swimming', 30)],
+        habits: { mindfulEating: t('2026-03-30'), earlySleep: t('2026-03-30') },
+      }),
+      pastRecord('2026-04-02', {
+        foundation: { lowerAbs: t('2026-04-02') },
+        movementSessions: [session('m2', '2026-04-02', 'zumba', 45)],
+        habits: { earlySleep: t('2026-04-02') },
+      }),
+      // Previous week: Monday 04-06 … Sunday 04-12.
+      pastRecord('2026-04-07', {
+        foundation: all('2026-04-07'),
+        movementSessions: [session('m3', '2026-04-07', 'yoga', 30)],
+        habits: { mindfulEating: t('2026-04-07') },
+      }),
+      pastRecord('2026-04-11', {
+        foundation: { lowerBack: t('2026-04-11'), pelvicFloor: t('2026-04-11') },
+        movementSessions: [session('m4', '2026-04-11', 'jingang', 40), session('m5', '2026-04-11', 'swimming', 20)],
+        habits: { earlySleep: t('2026-04-11') },
+      }),
+      // Current week, before today.
+      pastRecord('2026-04-14', {
+        foundation: { spineMobility: t('2026-04-14') },
+        movementSessions: [session('m6', '2026-04-14', 'zumba', 50)],
+        habits: { mindfulEating: t('2026-04-14'), earlySleep: t('2026-04-14') },
+      }),
+    ]
+    return state
+  }
+
+  const state = seededState()
+  const earliest = historyEarliestDayKey(state)
+  const current = state.currentDayKey
+  const weekSummary = (weekStart: string) => buildHistorySummary(state.history, weekDayKeys(weekStart), current)
+  const monthSummary = (monthKey: string) => buildHistorySummary(state.history, monthDayKeys(monthKey), current)
+  const byType = (summary: ReturnType<typeof weekSummary>) =>
+    Object.fromEntries(summary.movementByType.map((type) => [type.typeId, [type.sessionsCount, type.totalMinutes]]))
+
+  it('takes the earliest stored record as the back bound', () => {
+    expect(earliest).toBe('2026-03-30')
+    expect(historyEarliestDayKey(stateAt(at(10)))).toBe('2026-04-15')
+  })
+
+  describe('day navigation', () => {
+    it('steps back and forward by one day', () => {
+      expect(stepPeriodKey('day', '2026-04-15', -1, earliest, current)).toBe('2026-04-14')
+      expect(stepPeriodKey('day', '2026-04-01', 1, earliest, current)).toBe('2026-04-02')
+      expect(stepPeriodKey('day', '2026-04-01', -1, earliest, current)).toBe('2026-03-31')
+    })
+
+    it('never moves past today', () => {
+      expect(getPeriodNavigation('day', current, earliest, current)).toEqual({
+        key: current,
+        canGoBack: true,
+        canGoForward: false,
+        isCurrent: true,
+      })
+      expect(stepPeriodKey('day', current, 1, earliest, current)).toBe(current)
+    })
+
+    it('pulls a future day back to today', () => {
+      expect(getPeriodNavigation('day', '2026-04-20', earliest, current).key).toBe(current)
+    })
+
+    it('stops at the earliest record', () => {
+      expect(getPeriodNavigation('day', '2026-03-30', earliest, current).canGoBack).toBe(false)
+      expect(stepPeriodKey('day', '2026-03-30', -1, earliest, current)).toBe('2026-03-30')
+    })
+
+    it('can still move forward from a date picked before the earliest record', () => {
+      expect(stepPeriodKey('day', '2026-01-10', 1, earliest, current)).toBe('2026-01-11')
+    })
+
+    it('has nowhere to go on a fresh install', () => {
+      const fresh = stateAt(at(10))
+      const navigation = getPeriodNavigation('day', current, historyEarliestDayKey(fresh), current)
+      expect(navigation.canGoBack).toBe(false)
+      expect(navigation.canGoForward).toBe(false)
+    })
+  })
+
+  describe('week navigation', () => {
+    it('starts on this week and cannot go into a future week', () => {
+      const navigation = getPeriodNavigation('week', weekStartDayKey(current), earliest, current)
+      expect(navigation).toMatchObject({ key: '2026-04-13', isCurrent: true, canGoForward: false, canGoBack: true })
+      expect(stepPeriodKey('week', '2026-04-13', 1, earliest, current)).toBe('2026-04-13')
+    })
+
+    it('steps back week by week and stops at the week of the earliest record', () => {
+      expect(stepPeriodKey('week', '2026-04-13', -1, earliest, current)).toBe('2026-04-06')
+      expect(stepPeriodKey('week', '2026-04-06', -1, earliest, current)).toBe('2026-03-30')
+      expect(getPeriodNavigation('week', '2026-03-30', earliest, current).canGoBack).toBe(false)
+      expect(stepPeriodKey('week', '2026-03-30', -1, earliest, current)).toBe('2026-03-30')
+    })
+
+    it('aggregates foundation for a completed (non-current) week over all seven days', () => {
+      const summary = weekSummary('2026-04-06')
+      expect(summary.elapsedDaysCount).toBe(7)
+      expect(summary.foundationCompletedCount).toBe(6)
+      expect(summary.foundationPossibleCount).toBe(28)
+      expect(summary.foundationFullDaysCount).toBe(1)
+      expect(summary.foundationDaysById).toEqual({ lowerAbs: 1, lowerBack: 2, pelvicFloor: 2, spineMobility: 1 })
+    })
+
+    it('aggregates movement for a completed (non-current) week', () => {
+      const summary = weekSummary('2026-04-06')
+      expect(summary.movementSessionsCount).toBe(3)
+      expect(summary.movementTotalMinutes).toBe(90)
+      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [0, 0], yoga: [1, 30], jingang: [1, 40] })
+    })
+
+    it('counts only days so far in the current week', () => {
+      const summary = weekSummary('2026-04-13')
+      expect(summary.elapsedDaysCount).toBe(3)
+      expect(summary.foundationPossibleCount).toBe(12)
+      expect(summary.foundationCompletedCount).toBe(1)
+      expect(summary.movementSessionsCount).toBe(1)
+      expect(byType(summary).zumba).toEqual([1, 50])
+    })
+
+    it('keeps a week that spans two months whole', () => {
+      const summary = weekSummary('2026-03-30')
+      expect(summary.foundationCompletedCount).toBe(5)
+      expect(summary.movementTotalMinutes).toBe(75)
+    })
+  })
+
+  describe('month navigation', () => {
+    it('starts on this month and cannot go into a future month', () => {
+      expect(getPeriodNavigation('month', '2026-04', earliest, current)).toMatchObject({
+        isCurrent: true,
+        canGoForward: false,
+        canGoBack: true,
+      })
+      expect(stepPeriodKey('month', '2026-04', 1, earliest, current)).toBe('2026-04')
+      expect(getPeriodNavigation('month', '2026-06', earliest, current).key).toBe('2026-04')
+    })
+
+    it('steps back to the month of the earliest record and no further', () => {
+      expect(stepPeriodKey('month', '2026-04', -1, earliest, current)).toBe('2026-03')
+      expect(getPeriodNavigation('month', '2026-03', earliest, current).canGoBack).toBe(false)
+      expect(stepPeriodKey('month', '2026-03', -1, earliest, current)).toBe('2026-03')
+    })
+
+    it('aggregates foundation and movement for the current month', () => {
+      const summary = monthSummary('2026-04')
+      expect(summary.elapsedDaysCount).toBe(15)
+      expect(summary.foundationCompletedCount).toBe(8)
+      expect(summary.foundationPossibleCount).toBe(60)
+      expect(summary.foundationFullDaysCount).toBe(1)
+      expect(summary.foundationDaysById).toEqual({ lowerAbs: 2, lowerBack: 2, pelvicFloor: 2, spineMobility: 2 })
+      expect(summary.movementSessionsCount).toBe(5)
+      expect(summary.movementTotalMinutes).toBe(185)
+      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [2, 95], yoga: [1, 30], jingang: [1, 40] })
+    })
+
+    it('aggregates a previous month over all its days', () => {
+      const summary = monthSummary('2026-03')
+      expect(summary.elapsedDaysCount).toBe(31)
+      expect(summary.foundationPossibleCount).toBe(124)
+      expect(summary.foundationCompletedCount).toBe(4)
+      expect(summary.foundationFullDaysCount).toBe(1)
+      expect(summary.movementSessionsCount).toBe(1)
+      expect(byType(summary).swimming).toEqual([1, 30])
+    })
+  })
+
+  describe('existing habit summaries', () => {
+    it('still counts Mindful eating and Early sleep days per selected week', () => {
+      expect(weekSummary('2026-04-06')).toMatchObject({ mindfulEatingDaysCount: 1, earlySleepDaysCount: 1 })
+      expect(weekSummary('2026-04-13')).toMatchObject({ mindfulEatingDaysCount: 1, earlySleepDaysCount: 1 })
+    })
+
+    it('still counts Mindful eating and Early sleep days per selected month', () => {
+      expect(monthSummary('2026-04')).toMatchObject({ mindfulEatingDaysCount: 2, earlySleepDaysCount: 3 })
+      expect(monthSummary('2026-03')).toMatchObject({ mindfulEatingDaysCount: 1, earlySleepDaysCount: 1 })
+    })
+
+    it('includes today’s habit completions once synced', () => {
+      let today = seededState()
+      today = { ...today, today: { ...today.today, completionTimesByHabitId: { earlySleep: at(9).toISOString() } } }
+      today = ensureCurrentDay(today, at(10))
+
+      expect(buildHistorySummary(today.history, weekDayKeys('2026-04-13'), current).earlySleepDaysCount).toBe(2)
+    })
+  })
+})
+
+describe('Zumba label', () => {
+  it('shows existing zumba records as Zumba without changing the stored id', () => {
+    expect(movementTypeLabel('zumba')).toBe('Zumba')
+
+    const state = addMovementSessionState(stateAt(at(10)), { typeId: 'zumba', durationMinutes: 45 }, at(10))
+
+    expect(state.today.movementSessions[0].typeId).toBe('zumba')
+    expect(buildTodayTimeline(state, [], []).find((event) => event.kind === 'movement')!.title).toBe('Zumba')
   })
 })

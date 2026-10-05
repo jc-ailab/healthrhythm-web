@@ -18,8 +18,10 @@ import {
   formatFullDate,
   fromDayKey,
   makeLocalId,
+  monthKeyOf,
   movementTypeLabel,
   parseMovementMinutes,
+  shiftDayKey,
   type BreathMode,
   type BreathPattern,
   type BreathPhase,
@@ -35,7 +37,13 @@ import {
   type TabKey,
   type TodayTimelineEvent,
 } from './lib/domain'
-import { useHealthRhythmApp, type HistoryDailySummary, type MovementDefaults } from './lib/state'
+import {
+  useHealthRhythmApp,
+  type HistoryDailySummary,
+  type HistoryPeriodKind,
+  type HistoryPeriodNavigation,
+  type MovementDefaults,
+} from './lib/state'
 
 type LibrarySection = 'habits' | 'exercises' | 'routines'
 
@@ -209,7 +217,10 @@ function App() {
             dailySummary={app.historyDailySummary(app.selectedHistoryDayKey)}
             weekSummary={app.historyWeekSummary}
             monthSummary={app.historyMonthSummary}
+            navigation={app.historyNavigation}
             onSelectDay={app.setSelectedHistoryDayKey}
+            onStepPeriod={app.stepHistoryPeriod}
+            onResetPeriod={app.resetHistoryPeriod}
             onUpdateMovement={app.updateMovementSession}
             onDeleteMovement={app.deleteMovementSession}
           />
@@ -804,19 +815,33 @@ interface HistoryTabProps {
   dailySummary: HistoryDailySummary
   weekSummary: HistorySummary
   monthSummary: HistorySummary
+  navigation: Record<HistoryPeriodKind, HistoryPeriodNavigation>
   onSelectDay: (dayKey: string) => void
+  onStepPeriod: (kind: HistoryPeriodKind, delta: -1 | 1) => void
+  onResetPeriod: (kind: HistoryPeriodKind) => void
   onUpdateMovement: MovementUpdateHandler
   onDeleteMovement: MovementDeleteHandler
 }
 
 function HistoryTab(props: HistoryTabProps) {
+  const day = props.dailySummary
+
   return (
     <div className="page-grid">
       <Card className="card-compact">
-        <SectionHeader title="Selected day" subtitle="Quick review." />
+        <SectionHeader title="当日回顾" subtitle={formatDayKeyLabel(props.selectedDayKey)} />
 
-        <label className="field-card">
-          <span>View day</span>
+        <PeriodNav
+          label="切换日期"
+          navigation={props.navigation.day}
+          backLabel="‹ 前一天"
+          currentLabel="今天"
+          forwardLabel="后一天 ›"
+          onStep={(delta) => props.onStepPeriod('day', delta)}
+          onReset={() => props.onResetPeriod('day')}
+        />
+        <label className="field-card history-date-field">
+          <span>选择日期</span>
           <input
             type="date"
             value={props.selectedDayKey}
@@ -825,35 +850,9 @@ function HistoryTab(props: HistoryTabProps) {
           />
         </label>
 
-        <div className="metric-list">
-          <HistoryMetric label="Rhythm total" value={`${props.dailySummary.rhythmTotalMinutes} min`} />
-          <HistoryMetric label="Rhythm entries" value={`${props.dailySummary.rhythmEntriesCount}`} />
-          <HistoryMetric
-            label="Breath"
-            value={`${props.dailySummary.breathSessionsCount} session${props.dailySummary.breathSessionsCount === 1 ? '' : 's'} · ${props.dailySummary.breathRoundsCount} rounds`}
-          />
-          <HistoryMetric label="Strength" value={props.dailySummary.strengthSummary} />
-          <HistoryMetric
-            label="Mindful eating"
-            value={props.dailySummary.mindfulEatingCompleted ? 'Done' : 'Not done'}
-          />
-          <HistoryMetric
-            label="Early sleep"
-            value={props.dailySummary.earlySleepCompleted ? 'Done' : 'Not done'}
-          />
-        </div>
-      </Card>
-
-      <Card className="card-compact">
-        <SectionHeader title="当日基础与运动" subtitle={formatDayKeyLabel(props.selectedDayKey)} />
-        <div className="metric-row">
-          <span>每日基础</span>
-          <strong>
-            {props.dailySummary.foundationCompletedCount}/{props.dailySummary.foundation.length}
-          </strong>
-        </div>
+        <div className="activity-log-label">每日基础 · {day.foundationCompletedCount}/{day.foundation.length}</div>
         <div className="badge-row foundation-badges">
-          {props.dailySummary.foundation.map((item) => (
+          {day.foundation.map((item) => (
             <span key={item.id} className={`badge${item.completedAt ? ' is-on' : ''}`}>
               {item.completedAt ? '✓ ' : ''}
               {item.label}
@@ -864,52 +863,88 @@ function HistoryTab(props: HistoryTabProps) {
         <div className="activity-log">
           <div className="activity-log-label">
             运动
-            {props.dailySummary.movementSessions.length > 0 &&
-              ` · ${props.dailySummary.movementSessions.length} 次 · ${props.dailySummary.movementTotalMinutes} 分钟`}
+            {day.movementSessions.length > 0 && ` · ${day.movementSessions.length} 次 · ${day.movementTotalMinutes} 分钟`}
           </div>
           <MovementSessionList
             // Remount per day so an open editor never carries over to another date.
             key={props.selectedDayKey}
             dayKey={props.selectedDayKey}
-            sessions={props.dailySummary.movementSessions}
+            sessions={day.movementSessions}
             emptyText="这一天没有运动记录。"
             onUpdate={props.onUpdateMovement}
             onDelete={props.onDeleteMovement}
           />
         </div>
+
+        <div className="activity-log">
+          <div className="activity-log-label">节律与习惯</div>
+          <div className="metric-list">
+            <HistoryMetric label="Rhythm total" value={`${day.rhythmTotalMinutes} min`} />
+            <HistoryMetric label="Rhythm entries" value={`${day.rhythmEntriesCount}`} />
+            <HistoryMetric
+              label="Breath"
+              value={`${day.breathSessionsCount} session${day.breathSessionsCount === 1 ? '' : 's'} · ${day.breathRoundsCount} rounds`}
+            />
+            <HistoryMetric label="Strength" value={day.strengthSummary} />
+            <HistoryMetric label="Mindful eating" value={day.mindfulEatingCompleted ? 'Done' : 'Not done'} />
+            <HistoryMetric label="Early sleep" value={day.earlySleepCompleted ? 'Done' : 'Not done'} />
+          </div>
+        </div>
       </Card>
 
-      <WeeklyCoreSummary summary={props.weekSummary} currentDayKey={props.maxDayKey} />
-
       <div className="two-column-cards">
-        <Card>
-          <SectionHeader title="This week" subtitle="Simple review." />
-          <div className="metric-list">
-            <HistoryMetric label="Rhythm total" value={`${props.weekSummary.totalRhythmMinutes} min`} />
-            <HistoryMetric label="Days with rhythm" value={`${props.weekSummary.rhythmDaysCount}`} />
-            <HistoryMetric label="Days with strength" value={`${props.weekSummary.strengthDaysCount}`} />
-            <HistoryMetric
-              label="Mindful eating days"
-              value={`${props.weekSummary.mindfulEatingDaysCount}`}
-            />
-            <HistoryMetric label="Early sleep days" value={`${props.weekSummary.earlySleepDaysCount}`} />
-          </div>
-        </Card>
-
-        <Card>
-          <SectionHeader title="This month" subtitle="Monthly snapshot." />
-          <div className="metric-list">
-            <HistoryMetric label="Rhythm total" value={`${props.monthSummary.totalRhythmMinutes} min`} />
-            <HistoryMetric label="Days with rhythm" value={`${props.monthSummary.rhythmDaysCount}`} />
-            <HistoryMetric label="Days with strength" value={`${props.monthSummary.strengthDaysCount}`} />
-            <HistoryMetric
-              label="Mindful eating days"
-              value={`${props.monthSummary.mindfulEatingDaysCount}`}
-            />
-            <HistoryMetric label="Early sleep days" value={`${props.monthSummary.earlySleepDaysCount}`} />
-          </div>
-        </Card>
+        <PeriodSummaryCard
+          kind="week"
+          summary={props.weekSummary}
+          navigation={props.navigation.week}
+          onStep={(delta) => props.onStepPeriod('week', delta)}
+          onReset={() => props.onResetPeriod('week')}
+        />
+        <PeriodSummaryCard
+          kind="month"
+          summary={props.monthSummary}
+          navigation={props.navigation.month}
+          onStep={(delta) => props.onStepPeriod('month', delta)}
+          onReset={() => props.onResetPeriod('month')}
+        />
       </div>
+    </div>
+  )
+}
+
+function PeriodNav({
+  label,
+  navigation,
+  backLabel,
+  currentLabel,
+  forwardLabel,
+  onStep,
+  onReset,
+}: {
+  label: string
+  navigation: HistoryPeriodNavigation
+  backLabel: string
+  currentLabel: string
+  forwardLabel: string
+  onStep: (delta: -1 | 1) => void
+  onReset: () => void
+}) {
+  return (
+    <div className="chip-row is-single-line period-nav" role="group" aria-label={label}>
+      <button type="button" className="chip" disabled={!navigation.canGoBack} onClick={() => onStep(-1)}>
+        {backLabel}
+      </button>
+      <button
+        type="button"
+        className={`chip${navigation.isCurrent ? ' is-active' : ''}`}
+        aria-pressed={navigation.isCurrent}
+        onClick={onReset}
+      >
+        {currentLabel}
+      </button>
+      <button type="button" className="chip" disabled={!navigation.canGoForward} onClick={() => onStep(1)}>
+        {forwardLabel}
+      </button>
     </div>
   )
 }
@@ -1225,46 +1260,90 @@ function MovementSessionRow({
   )
 }
 
-function WeeklyCoreSummary({ summary, currentDayKey }: { summary: HistorySummary; currentDayKey: string }) {
-  // Days still ahead this week cannot count against the completion rate.
-  const elapsedDays = summary.foundationDailyCounts.filter((day) => day.dayKey <= currentDayKey).length
-  const possible = elapsedDays * FOUNDATION_ITEMS.length
-  const rate = possible > 0 ? Math.round((summary.foundationCompletedCount / possible) * 100) : 0
+function formatMonthDay(dayKey: string) {
+  const [, month, day] = dayKey.split('-').map(Number)
+  return `${month}月${day}日`
+}
+
+function periodSubtitle(kind: 'week' | 'month', summary: HistorySummary, navigation: HistoryPeriodNavigation) {
+  if (kind === 'month') {
+    const [year, month] = monthKeyOf(navigation.key).split('-').map(Number)
+    return `${year}年${month}月${navigation.isCurrent ? ' · 本月' : ''}`
+  }
+  const first = summary.foundationDailyCounts[0]?.dayKey ?? navigation.key
+  const range = `${formatMonthDay(first)} – ${formatMonthDay(shiftDayKey(first, 6))}`
+  return `${range}${navigation.isCurrent ? ' · 本周' : ''}`
+}
+
+function PeriodSummaryCard({
+  kind,
+  summary,
+  navigation,
+  onStep,
+  onReset,
+}: {
+  kind: 'week' | 'month'
+  summary: HistorySummary
+  navigation: HistoryPeriodNavigation
+  onStep: (delta: -1 | 1) => void
+  onReset: () => void
+}) {
+  const isWeek = kind === 'week'
+  const rate =
+    summary.foundationPossibleCount > 0
+      ? Math.round((summary.foundationCompletedCount / summary.foundationPossibleCount) * 100)
+      : 0
 
   return (
-    <Card className="card-compact span-full">
-      <SectionHeader title="本周基础与运动" subtitle="周一至今的完成情况。" />
+    <Card className="card-compact">
+      <SectionHeader title={isWeek ? '周汇总' : '月汇总'} subtitle={periodSubtitle(kind, summary, navigation)} />
+      <PeriodNav
+        label={isWeek ? '切换周' : '切换月份'}
+        navigation={navigation}
+        backLabel={isWeek ? '‹ 上一周' : '‹ 上个月'}
+        currentLabel={isWeek ? '本周' : '本月'}
+        forwardLabel={isWeek ? '下一周 ›' : '下个月 ›'}
+        onStep={onStep}
+        onReset={onReset}
+      />
 
       <div className="activity-log-label">每日基础</div>
-      <div className="week-strip">
-        {summary.foundationDailyCounts.map((day) => {
-          const isFuture = day.dayKey > currentDayKey
-          const level =
-            isFuture || day.completedCount === 0
-              ? ''
-              : day.completedCount === FOUNDATION_ITEMS.length
-                ? ' is-full'
-                : ' is-partial'
-          return (
-            <div
-              key={day.dayKey}
-              className={`week-strip-day${level}${isFuture ? ' is-future' : ''}`}
-              aria-label={`周${WEEKDAY_LABELS[fromDayKey(day.dayKey).getDay()]} ${isFuture ? '未到' : `${day.completedCount}/${FOUNDATION_ITEMS.length}`}`}
-            >
-              <span>{WEEKDAY_LABELS[fromDayKey(day.dayKey).getDay()]}</span>
-              <strong>{isFuture ? '·' : day.completedCount}</strong>
-            </div>
-          )
-        })}
-      </div>
+      {isWeek && (
+        <div className="week-strip">
+          {summary.foundationDailyCounts.map((day, index) => {
+            const isFuture = index >= summary.elapsedDaysCount
+            const level =
+              isFuture || day.completedCount === 0
+                ? ''
+                : day.completedCount === FOUNDATION_ITEMS.length
+                  ? ' is-full'
+                  : ' is-partial'
+            const weekday = WEEKDAY_LABELS[fromDayKey(day.dayKey).getDay()]
+            return (
+              <div
+                key={day.dayKey}
+                className={`week-strip-day${level}${isFuture ? ' is-future' : ''}`}
+                aria-label={`周${weekday} ${isFuture ? '未到' : `${day.completedCount}/${FOUNDATION_ITEMS.length}`}`}
+              >
+                <span>{weekday}</span>
+                <strong>{isFuture ? '·' : day.completedCount}</strong>
+              </div>
+            )
+          })}
+        </div>
+      )}
       <div className="metric-list">
         <HistoryMetric
           label="总完成"
-          value={`${summary.foundationCompletedCount}/${possible} 项次 · ${rate}%`}
+          value={`${summary.foundationCompletedCount}/${summary.foundationPossibleCount} 项次 · ${rate}%`}
         />
         <HistoryMetric label="四项全完成" value={`${summary.foundationFullDaysCount} 天`} />
         {FOUNDATION_ITEMS.map((item) => (
-          <HistoryMetric key={item.id} label={item.label} value={`${summary.foundationDaysById[item.id]}/${elapsedDays} 天`} />
+          <HistoryMetric
+            key={item.id}
+            label={item.label}
+            value={`${summary.foundationDaysById[item.id]}/${summary.elapsedDaysCount} 天`}
+          />
         ))}
       </div>
 
@@ -1276,10 +1355,23 @@ function WeeklyCoreSummary({ summary, currentDayKey }: { summary: HistorySummary
           {summary.movementByType.map((type) => (
             <HistoryMetric
               key={type.typeId}
+              // Type names are shown as written (Zumba, not ZUMBA).
+              keepCase
               label={movementTypeLabel(type.typeId)}
               value={type.sessionsCount > 0 ? `${type.sessionsCount} 次 · ${type.totalMinutes} 分钟` : '—'}
             />
           ))}
+        </div>
+      </div>
+
+      <div className="activity-log">
+        <div className="activity-log-label">节律与习惯</div>
+        <div className="metric-list">
+          <HistoryMetric label="Rhythm total" value={`${summary.totalRhythmMinutes} min`} />
+          <HistoryMetric label="Days with rhythm" value={`${summary.rhythmDaysCount}`} />
+          <HistoryMetric label="Days with strength" value={`${summary.strengthDaysCount}`} />
+          <HistoryMetric label="Mindful eating days" value={`${summary.mindfulEatingDaysCount}`} />
+          <HistoryMetric label="Early sleep days" value={`${summary.earlySleepDaysCount}`} />
         </div>
       </div>
     </Card>
@@ -1990,9 +2082,9 @@ function ToggleRow({
 }
 
 
-function HistoryMetric({ label, value }: { label: string; value: string }) {
+function HistoryMetric({ label, value, keepCase = false }: { label: string; value: string; keepCase?: boolean }) {
   return (
-    <div className="metric-row">
+    <div className={`metric-row${keepCase ? ' keep-case' : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>

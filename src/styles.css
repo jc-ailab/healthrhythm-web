@@ -664,10 +664,6 @@
     grid-column: 1 / -1;
   }
 
-  .page-grid > .span-full {
-    grid-column: 1 / -1;
-  }
-
   .two-column-cards {
     grid-template-columns: 1fr 1fr;
   }
@@ -1282,6 +1278,29 @@
   }
 }
 
+.movement-chip-row {
+  gap: 6px;
+}
+
 .movement-chip-row .chip {
+  padding-inline: 2px;
+}
+
+/* ─── History period navigation ────────────────────────────────────────────── */
+
+.period-nav {
+  margin-bottom: 10px;
+}
+
+.period-nav .chip {
   padding-inline: 4px;
+  white-space: nowrap;
+}
+
+.history-date-field {
+  margin-bottom: 10px;
+}
+
+.metric-row.keep-case span {
+  text-transform: none;
 }

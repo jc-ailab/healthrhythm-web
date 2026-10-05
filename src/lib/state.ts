@@ -46,9 +46,15 @@ import {
   getBreathPhaseDuration,
   isKnownMovementType,
   makeLocalId,
+  monthDayKeys,
+  monthKeyOf,
   movementTypeLabel,
   parseMovementMinutes,
+  shiftDayKey,
+  shiftMonthKey,
   toDayKey,
+  weekDayKeys,
+  weekStartDayKey,
 } from './domain'
 import {
   STORAGE_NOTICES,
@@ -88,6 +94,16 @@ export interface HistoryDailySummary {
   foundationCompletedCount: number
   movementSessions: MovementSession[]
   movementTotalMinutes: number
+}
+
+export type HistoryPeriodKind = 'day' | 'week' | 'month'
+
+export interface HistoryPeriodNavigation {
+  /** dayKey for 'day', Monday dayKey for 'week', 'YYYY-MM' for 'month'. */
+  key: string
+  canGoBack: boolean
+  canGoForward: boolean
+  isCurrent: boolean
 }
 
 export interface MovementDefaults {
@@ -146,6 +162,9 @@ export interface HealthRhythmViewModel extends AppActions {
   movementDefaultsFor: (typeId: string) => MovementDefaults
   selectedHistoryDayKey: string
   setSelectedHistoryDayKey: (dayKey: string) => void
+  historyNavigation: Record<HistoryPeriodKind, HistoryPeriodNavigation>
+  stepHistoryPeriod: (kind: HistoryPeriodKind, delta: -1 | 1) => void
+  resetHistoryPeriod: (kind: HistoryPeriodKind) => void
   storageNotice: StorageNotice | null
   dismissStorageNotice: () => void
 }
@@ -153,7 +172,12 @@ export interface HealthRhythmViewModel extends AppActions {
 export function useHealthRhythmApp(): HealthRhythmViewModel {
   const [initialLoad] = useState(() => loadPersistedState(new Date()))
   const [state, setState] = useState<AppState>(initialLoad.state)
-  const [selectedHistoryDayKey, setSelectedHistoryDayKey] = useState(() => state.currentDayKey)
+  // History selections are view state only; they are never persisted.
+  const [selectedHistoryKeys, setSelectedHistoryKeys] = useState<Record<HistoryPeriodKind, string>>(() => ({
+    day: state.currentDayKey,
+    week: periodKeyFor('week', state.currentDayKey),
+    month: periodKeyFor('month', state.currentDayKey),
+  }))
   const storageNotice = useSyncExternalStore(subscribeStorageNotice, getStorageNotice)
   const metronomeRef = useRef(new WebMetronome())
   const breathCuePlayerRef = useRef(new BreathCuePlayer())
@@ -559,10 +583,22 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   const derived = useMemo(() => {
     const visibleTodayHabits = nextVisibleTodayHabits(state.library.habits)
     const strengthRoutines = resolveStrengthRoutines(state.library.exercises, state.strength.routines)
-    const historyWeekSummary = buildHistorySummary(state.history, currentIntervalDayKeys('week', new Date()))
+    const earliestDayKey = historyEarliestDayKey(state)
+    const historyNavigation = Object.fromEntries(
+      HISTORY_PERIOD_KINDS.map((kind) => [
+        kind,
+        getPeriodNavigation(kind, selectedHistoryKeys[kind], earliestDayKey, state.currentDayKey),
+      ]),
+    ) as Record<HistoryPeriodKind, HistoryPeriodNavigation>
+    const historyWeekSummary = buildHistorySummary(
+      state.history,
+      weekDayKeys(historyNavigation.week.key),
+      state.currentDayKey,
+    )
     const historyMonthSummary = buildHistorySummary(
       state.history,
-      currentIntervalDayKeys('month', new Date()),
+      monthDayKeys(historyNavigation.month.key),
+      state.currentDayKey,
     )
 
     return {
@@ -581,16 +617,33 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       strengthCompletedCountToday: state.strength.completedExerciseIds.length,
       strengthSummaryToday: buildStrengthSummary(state.strength.completedExerciseIds, strengthRoutines),
       todayTimeline: buildTodayTimeline(state, visibleTodayHabits, strengthRoutines),
+      earliestDayKey,
+      historyNavigation,
       historyWeekSummary,
       historyMonthSummary,
     }
-  }, [state])
+  }, [state, selectedHistoryKeys])
+
+  const { earliestDayKey, historyNavigation } = derived
 
   return {
     state,
-    selectedHistoryDayKey:
-      selectedHistoryDayKey > state.currentDayKey ? state.currentDayKey : selectedHistoryDayKey,
-    setSelectedHistoryDayKey,
+    selectedHistoryDayKey: historyNavigation.day.key,
+    setSelectedHistoryDayKey: (dayKey) => {
+      // The iOS date picker's Clear button reports ''; keep the current day instead.
+      if (dayKey) {
+        setSelectedHistoryKeys((current) => ({ ...current, day: dayKey }))
+      }
+    },
+    historyNavigation,
+    stepHistoryPeriod: (kind, delta) =>
+      setSelectedHistoryKeys((current) => ({
+        ...current,
+        // From the latest selection, so taps landing before a re-render each count.
+        [kind]: stepPeriodKey(kind, current[kind], delta, earliestDayKey, state.currentDayKey),
+      })),
+    resetHistoryPeriod: (kind) =>
+      setSelectedHistoryKeys((current) => ({ ...current, [kind]: periodKeyFor(kind, state.currentDayKey) })),
     storageNotice,
     dismissStorageNotice,
     visibleTodayHabits: derived.visibleTodayHabits,
@@ -1611,31 +1664,82 @@ function foundationCountForRecord(record: DayRecord) {
   return FOUNDATION_ITEMS.filter((item) => Boolean(record.foundation[item.id])).length
 }
 
-export function currentIntervalDayKeys(kind: 'week' | 'month', now: Date) {
-  const keys: string[] = []
-  if (kind === 'week') {
-    const current = new Date(now)
-    const day = current.getDay()
-    const diffToMonday = day === 0 ? -6 : 1 - day
-    current.setHours(12, 0, 0, 0)
-    current.setDate(current.getDate() + diffToMonday)
-    for (let index = 0; index < 7; index += 1) {
-      keys.push(toDayKey(current))
-      current.setDate(current.getDate() + 1)
-    }
-    return keys
-  }
+const HISTORY_PERIOD_KINDS: HistoryPeriodKind[] = ['day', 'week', 'month']
 
-  const current = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0, 0)
-  while (current.getMonth() === now.getMonth()) {
-    keys.push(toDayKey(current))
-    current.setDate(current.getDate() + 1)
+function periodKeyFor(kind: HistoryPeriodKind, dayKey: string) {
+  switch (kind) {
+    case 'day':
+      return dayKey
+    case 'week':
+      return weekStartDayKey(dayKey)
+    case 'month':
+      return monthKeyOf(dayKey)
   }
-  return keys
 }
 
-export function buildHistorySummary(history: DayRecord[], dayKeys: string[]): HistorySummary {
+function shiftPeriodKey(kind: HistoryPeriodKind, key: string, delta: number) {
+  switch (kind) {
+    case 'day':
+      return shiftDayKey(key, delta)
+    case 'week':
+      return shiftDayKey(key, delta * 7)
+    case 'month':
+      return shiftMonthKey(key, delta)
+  }
+}
+
+/** The first day History can usefully show: the oldest stored record, or today. */
+export function historyEarliestDayKey(state: AppState) {
+  return state.history.reduce(
+    (earliest, record) => (record.dayKey < earliest ? record.dayKey : earliest),
+    state.currentDayKey,
+  )
+}
+
+/**
+ * Back stops at the period holding the oldest record; forward stops at the current period.
+ * A key beyond the current period (e.g. after the clock moved back) is pulled back to it.
+ */
+export function getPeriodNavigation(
+  kind: HistoryPeriodKind,
+  key: string,
+  earliestDayKey: string,
+  currentDayKey: string,
+): HistoryPeriodNavigation {
+  const latest = periodKeyFor(kind, currentDayKey)
+  const clampedKey = key > latest ? latest : key
+  return {
+    key: clampedKey,
+    canGoBack: clampedKey > periodKeyFor(kind, earliestDayKey),
+    canGoForward: clampedKey < latest,
+    isCurrent: clampedKey === latest,
+  }
+}
+
+export function stepPeriodKey(
+  kind: HistoryPeriodKind,
+  key: string,
+  delta: -1 | 1,
+  earliestDayKey: string,
+  currentDayKey: string,
+) {
+  const navigation = getPeriodNavigation(kind, key, earliestDayKey, currentDayKey)
+  if ((delta < 0 && !navigation.canGoBack) || (delta > 0 && !navigation.canGoForward)) {
+    return navigation.key
+  }
+  return shiftPeriodKey(kind, navigation.key, delta)
+}
+
+export function buildHistorySummary(
+  history: DayRecord[],
+  dayKeys: string[],
+  // Days after this are still ahead and do not count towards completion rates.
+  currentDayKey?: string,
+): HistorySummary {
   const matchingRecords = history.filter((record) => dayKeys.includes(record.dayKey))
+  const elapsedDaysCount = currentDayKey
+    ? dayKeys.filter((dayKey) => dayKey <= currentDayKey).length
+    : dayKeys.length
   const movementSessions = matchingRecords.flatMap((record) => record.movementSessions)
   const movementTypeIds = [
     ...MOVEMENT_TYPES.map((type) => type.id),
@@ -1663,7 +1767,9 @@ export function buildHistorySummary(history: DayRecord[], dayKeys: string[]): Hi
         matchingRecords.filter((record) => Boolean(record.foundation[item.id])).length,
       ]),
     ) as Record<FoundationItemId, number>,
+    elapsedDaysCount,
     foundationCompletedCount: foundationDailyCounts.reduce((total, day) => total + day.completedCount, 0),
+    foundationPossibleCount: elapsedDaysCount * FOUNDATION_ITEMS.length,
     foundationFullDaysCount: foundationDailyCounts.filter((day) => day.completedCount === FOUNDATION_ITEMS.length)
       .length,
     foundationDailyCounts,
