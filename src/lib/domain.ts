@@ -701,7 +701,7 @@ export function formatDurationMinutes(totalSeconds: number) {
     return '不足 1 分钟'
   }
 
-  const minutes = Math.max(1, Math.floor(totalSeconds / 60))
+  const minutes = Math.round(totalSeconds / 6) / 10
   return `${minutes} 分钟`
 }
 

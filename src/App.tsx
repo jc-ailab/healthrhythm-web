@@ -509,7 +509,7 @@ function RhythmTab(props: RhythmTabProps) {
               <div key={entry.id} className="event-row">
                 <span className="event-time">{formatClockTime(entry.startAt)}</span>
                 <span className="event-title">节律</span>
-                <span className="event-summary">{Math.max(1, Math.floor(entry.durationSeconds / 60))} 分钟</span>
+                <span className="event-summary">{Math.round(entry.durationSeconds / 6) / 10} 分钟</span>
               </div>
             ))}
           </div>

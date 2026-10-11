@@ -2,7 +2,7 @@ import v2Fixture from './fixtures/v2-save.json'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildExportText, parseImportText } from './dataTransfer'
 import { listBackups, pruneSafetyCopies } from './backupStore'
-import { createInitialState, FOUNDATION_ITEMS, type AppState, type HabitDefinition } from './domain'
+import { createInitialState, FOUNDATION_ITEMS, formatDurationMinutes, type AppState, type HabitDefinition } from './domain'
 import { addMovementSessionState, buildDailyHistorySummary, buildHistorySummary, buildTodayTimeline, ensureCurrentDay, loadPersistedState, restoreStoredState, saveState, toggleHabitState, toggleStrengthExerciseState, resolveStrengthRoutines } from './state'
 import { completedHabitIds, coreExercises, habitMode, moveHabit, exercisePrescription } from './v3'
 import { resetStorageStatus } from './storageStatus'
@@ -192,5 +192,6 @@ describe('V3 persistence and logging', () => {
     state.history[0].rhythmEntries = entries
     expect(buildDailyHistorySummary(state.history[0], []).rhythmTotalMinutes).toBe(3)
     expect(buildHistorySummary(state.history, [state.currentDayKey]).totalRhythmMinutes).toBe(3)
+    expect(formatDurationMinutes(90)).toBe('1.5 分钟')
   })
 })
