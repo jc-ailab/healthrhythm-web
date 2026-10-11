@@ -37,7 +37,7 @@ export function getStorageNotice() {
 }
 
 export function setStorageNotice(notice: StorageNotice | null) {
-  if (currentNotice?.kind === notice?.kind) {
+  if (currentNotice?.kind === notice?.kind && currentNotice?.message === notice?.message) {
     return
   }
 

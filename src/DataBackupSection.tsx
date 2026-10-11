@@ -13,6 +13,7 @@ import {
   DATA_ERRORS,
   type DataSummary,
 } from './lib/dataTransfer'
+import type { PersistenceSession } from './lib/persistence'
 import type { AppState } from './lib/domain'
 
 type Pending =
@@ -31,13 +32,19 @@ const REASON_LABELS: Record<BackupReason, string> = {
 export function DataBackupSection({
   state,
   canPersist,
+  canRecover = false,
+  session,
   onReplace,
 }: {
   state: AppState
   canPersist: boolean
+  canRecover?: boolean
+  session?: PersistenceSession
   onReplace: (next: AppState) => void
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const [pending, setPending] = useState<Pending | null>(null)
   const [message, setMessage] = useState<Message | null>(null)
   const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null)
@@ -54,11 +61,13 @@ export function DataBackupSection({
   const isSessionActive = [state.rhythm.status, state.breath.status].some(
     (status) => status === 'running' || status === 'paused',
   )
-  const blockedReason = !canPersist
+  const blockedReason = !canPersist && !canRecover
     ? '存档未安全加载或备份，导入和恢复暂不可用。请检查存储空间与权限后刷新。'
-    : isSessionActive
-      ? '请先结束正在进行的节律或呼吸练习，再导入或恢复。'
-      : null
+    : busy
+      ? '正在核验并保存，请稍候。'
+      : isSessionActive
+        ? '请先结束正在进行的节律或呼吸练习，再导入或恢复。'
+        : null
 
   function handleExport() {
     const now = new Date()
@@ -100,15 +109,20 @@ export function DataBackupSection({
     setPending({ kind: 'restore', state: result.state, summary: result.summary, key })
   }
 
-  function confirmPending() {
-    if (!pending || blockedReason) return
-    const result = replaceWithSafetyCopy(
+  async function confirmPending() {
+    if (!pending || blockedReason || busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
+    const result = await replaceWithSafetyCopy(
       state,
       pending.state,
       pending.kind === 'import' ? 'before-import' : 'before-restore',
       new Date(),
       pending.kind === 'restore' ? pending.key : undefined,
+      session,
     )
+    busyRef.current = false
+    setBusy(false)
     if (!result.ok) {
       setMessage({ tone: 'error', text: result.error })
       setPending(null)
@@ -137,6 +151,14 @@ export function DataBackupSection({
           <p>所有记录只保存在这台设备的浏览器里。定期导出一份，换手机或清理浏览器时也不会丢。</p>
         </div>
         <p className="data-current">当前数据：{describeSummary(current)}</p>
+        {!canPersist && (
+          <p className="data-message is-error">已暂停记录。下方导出保存本页预览或未保存的改动；恢复原存档请先下载原始数据。</p>
+        )}
+        {!canPersist && session?.recoveryRaw !== null && session?.recoveryRaw !== undefined && (
+          <button className="secondary-button" type="button" onClick={() =>
+            downloadText(`healthrhythm-original-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, session.recoveryRaw!)
+          }>下载原始数据</button>
+        )}
 
         {message && (
           <p className={`data-message${message.tone === 'error' ? ' is-error' : ''}`} role="status">
@@ -204,7 +226,7 @@ export function DataBackupSection({
               >
                 {pending.kind === 'import' ? '确认替换' : '确认恢复'}
               </button>
-              <button className="secondary-button" type="button" onClick={() => setPending(null)}>
+              <button className="secondary-button" type="button" disabled={busy} onClick={() => setPending(null)}>
                 取消
               </button>
             </div>

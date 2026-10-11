@@ -57,11 +57,8 @@ import {
   weekStartDayKey,
 } from './domain'
 import {
-  STORAGE_NOTICES,
   dismissStorageNotice,
   getStorageNotice,
-  reportSaveFailure,
-  reportSaveSuccess,
   setStorageNotice,
   subscribeStorageNotice,
   type StorageNotice,
@@ -71,8 +68,9 @@ import { backupKeyFor, writeBackup, readBackup } from './backupStore'
 
 export { backupKeyFor }
 
-const STORAGE_KEY = 'health-rhythm-web-v2'
-const LEGACY_STORAGE_KEY = 'health-rhythm-web-v1'
+import { V2_STORAGE_KEY, V1_STORAGE_KEY } from './storageKeys'
+import { PersistenceSession, RECOVERY_NOTICE } from './persistence'
+import { assertUsableState } from './dataTransfer'
 
 type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'strength'> & {
   version?: 1 | 2 | 3
@@ -171,8 +169,10 @@ export interface HealthRhythmViewModel extends AppActions {
   historyNavigation: Record<HistoryPeriodKind, HistoryPeriodNavigation>
   stepHistoryPeriod: (kind: HistoryPeriodKind, delta: -1 | 1) => void
   resetHistoryPeriod: (kind: HistoryPeriodKind) => void
-  /** False when unreadable data could not be backed up; nothing may overwrite it then. */
+  /** False while loading, after a storage failure, or when another V3 tab has newer data. */
   canPersist: boolean
+  canRecover: boolean
+  persistenceSession: PersistenceSession
   /** Swaps in a state that has already been validated and saved (see dataTransfer). */
   replaceAppState: (next: AppState) => void
   storageNotice: StorageNotice | null
@@ -180,8 +180,12 @@ export interface HealthRhythmViewModel extends AppActions {
 }
 
 export function useHealthRhythmApp(): HealthRhythmViewModel {
-  const [initialLoad] = useState(() => loadPersistedState(new Date()))
-  const [state, setState] = useState<AppState>(initialLoad.state)
+  const [session] = useState(() => new PersistenceSession())
+  const [state, setState] = useState<AppState>(() => freshState(new Date()))
+  const [loaded, setLoaded] = useState(false)
+  const [stateGeneration, setStateGeneration] = useState(0)
+  const canPersist = useSyncExternalStore(session.subscribe, session.getCanPersist)
+  const canRecover = useSyncExternalStore(session.subscribe, session.getCanRecover)
   // History selections are view state only; they are never persisted.
   const [selectedHistoryKeys, setSelectedHistoryKeys] = useState<Record<HistoryPeriodKind, string>>(() => ({
     day: state.currentDayKey,
@@ -195,17 +199,32 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   const previousBreathPhaseRef = useRef(state.breath.currentPhase)
 
   useEffect(() => {
-    if (initialLoad.notice) {
-      setStorageNotice(initialLoad.notice)
-    }
-  }, [initialLoad])
+    let cancelled = false
+    void loadPersistedState(new Date(), session).then((result) => {
+      if (!cancelled) {
+        setState(result.state)
+        setStateGeneration(result.session.generation)
+        setLoaded(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [session])
 
   useEffect(() => {
-    // When unreadable data could not be backed up, never write over it.
-    if (initialLoad.canPersist) {
-      saveState(state)
+    // Recovery can publish readiness before its caller replaces the React snapshot.
+    // Never enqueue that old snapshot using the newly imported generation.
+    if (loaded && canPersist && stateGeneration === session.generation) {
+      void saveState(state, session, stateGeneration)
     }
-  }, [initialLoad, state])
+  }, [loaded, canPersist, state, session, stateGeneration])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea === localStorage) session.observeStorage(event)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [session])
 
   useEffect(() => {
     const refresh = () => {
@@ -222,7 +241,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   }, [])
 
   useEffect(() => {
-    if (state.rhythm.status !== 'running' && state.breath.status !== 'running') {
+    if (!canPersist || (state.rhythm.status !== 'running' && state.breath.status !== 'running')) {
       return
     }
 
@@ -231,22 +250,22 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     }, 250)
 
     return () => window.clearInterval(intervalId)
-  }, [state.rhythm.status, state.breath.status])
+  }, [canPersist, state.rhythm.status, state.breath.status])
 
   useEffect(() => {
-    if (state.rhythm.status === 'running' && state.rhythm.isSoundEnabled) {
+    if (canPersist && state.rhythm.status === 'running' && state.rhythm.isSoundEnabled) {
       void metronomeRef.current.start(RHYTHM_BPM)
     } else {
       metronomeRef.current.stop()
     }
-  }, [state.rhythm.isSoundEnabled, state.rhythm.status])
+  }, [canPersist, state.rhythm.isSoundEnabled, state.rhythm.status])
 
   useEffect(() => {
     const cuePlayer = breathCuePlayerRef.current
     const previousStatus = previousBreathStatusRef.current
     const previousPhase = previousBreathPhaseRef.current
 
-    if (!state.breath.isSoundEnabled || state.breath.status !== 'running') {
+    if (!canPersist || !state.breath.isSoundEnabled || state.breath.status !== 'running') {
       cuePlayer.stop()
     } else if (
       (previousStatus === 'idle' || previousStatus === 'completed') &&
@@ -259,13 +278,20 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
 
     previousBreathStatusRef.current = state.breath.status
     previousBreathPhaseRef.current = state.breath.currentPhase
-  }, [state.breath.currentPhase, state.breath.isSoundEnabled, state.breath.status])
+  }, [canPersist, state.breath.currentPhase, state.breath.isSoundEnabled, state.breath.status])
+
+  function allowRecording() {
+    if (loaded && session.getCanPersist()) return true
+    setStorageNotice(session.notice ?? { kind: 'unprotected', message: '存档正在安全加载，暂不能记录。' })
+    return false
+  }
 
   const actions: AppActions = {
     selectTab(tab) {
       setState((current) => ({ ...current, selectedTab: tab }))
     },
     selectRhythmDuration(minutes) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         if (!RHYTHM_DURATIONS.includes(minutes as (typeof RHYTHM_DURATIONS)[number])) {
@@ -286,13 +312,16 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     toggleRhythm() {
+      if (!allowRecording()) return
       void metronomeRef.current.unlock()
       setState((current) => toggleRhythmState(ensureCurrentDay(current, new Date()), new Date()))
     },
     endRhythm() {
+      if (!allowRecording()) return
       setState((current) => endRhythmState(ensureCurrentDay(current, new Date()), new Date()))
     },
     setRhythmSoundEnabled(isEnabled) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         return syncHistory({
@@ -305,6 +334,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     selectBreathMode(mode) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         if (!['idle', 'completed'].includes(next.breath.status)) {
@@ -325,6 +355,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     setBreathCustomValue(phase, value) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         if (!['idle', 'completed'].includes(next.breath.status)) {
@@ -346,6 +377,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     selectBreathRounds(rounds) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         if (!BREATH_ROUND_OPTIONS.includes(rounds as (typeof BREATH_ROUND_OPTIONS)[number])) {
@@ -367,13 +399,16 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     toggleBreath() {
+      if (!allowRecording()) return
       void breathCuePlayerRef.current.unlock()
       setState((current) => toggleBreathState(ensureCurrentDay(current, new Date()), new Date()))
     },
     endBreath() {
+      if (!allowRecording()) return
       setState((current) => endBreathState(ensureCurrentDay(current, new Date()), new Date()))
     },
     setBreathSoundEnabled(isEnabled) {
+      if (!allowRecording()) return
       if (!isEnabled) {
         breathCuePlayerRef.current.stop()
       }
@@ -390,41 +425,49 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     toggleHabit(habitId) {
+      if (!allowRecording()) return
       setState((current) => {
         const now = new Date()
         return toggleHabitState(ensureCurrentDay(current, now), habitId, now)
       })
     },
     toggleStrengthExercise(exerciseId) {
+      if (!allowRecording()) return
       setState((current) => {
         const now = new Date()
         return toggleStrengthExerciseState(ensureCurrentDay(current, now), exerciseId, now)
       })
     },
     toggleFoundationItem(itemId) {
+      if (!allowRecording()) return
       setState((current) => {
         const now = new Date()
         return toggleFoundationItemState(ensureCurrentDay(current, now), itemId, now)
       })
     },
     addMovementSession(draft) {
+      if (!allowRecording()) return
       setState((current) => {
         const now = new Date()
         return addMovementSessionState(ensureCurrentDay(current, now), draft, now)
       })
     },
     updateMovementSession(dayKey, sessionId, draft) {
+      if (!allowRecording()) return
       setState((current) =>
         updateMovementSessionState(ensureCurrentDay(current, new Date()), dayKey, sessionId, draft),
       )
     },
     deleteMovementSession(dayKey, sessionId) {
+      if (!allowRecording()) return
       setState((current) => deleteMovementSessionState(ensureCurrentDay(current, new Date()), dayKey, sessionId))
     },
     moveHabit(id, direction) {
+      if (!allowRecording()) return
       setState((current) => ({ ...current, library: { ...current.library, habits: moveHabit(current.library.habits, id, direction) } }))
     },
     saveHabit(habit) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         const habits = upsertById(next.library.habits, sanitizeHabit(habit))
@@ -439,6 +482,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     saveExercise(exercise) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         const exercises = upsertById(next.library.exercises, sanitizeExercise(exercise))
@@ -453,6 +497,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     saveStrengthRoutine(routine) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         const routines = upsertById(next.strength.routines, sanitizeRoutine(routine))
@@ -467,6 +512,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     addExerciseToRoutine(routineId, exerciseId) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         return syncHistory({
@@ -486,6 +532,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     removeRoutineExercise(routineId, index) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         return syncHistory({
@@ -505,6 +552,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     moveRoutineExercise(routineId, index, direction) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         return syncHistory({
@@ -531,6 +579,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })
     },
     updateRoutineExercise(routineId, index, update) {
+      if (!allowRecording()) return
       setState((current) => {
         const next = ensureCurrentDay(current, new Date())
         return syncHistory({
@@ -614,10 +663,13 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
       })),
     resetHistoryPeriod: (kind) =>
       setSelectedHistoryKeys((current) => ({ ...current, [kind]: periodKeyFor(kind, state.currentDayKey) })),
-    canPersist: initialLoad.canPersist,
+    canPersist: loaded && canPersist,
+    canRecover: loaded && canRecover,
+    persistenceSession: session,
     replaceAppState: (next) => {
       // Stay on Library so the success message is visible after the swap.
       setState(() => ({ ...next, selectedTab: 'library' }))
+      setStateGeneration(session.generation)
     },
     storageNotice,
     dismissStorageNotice,
@@ -644,48 +696,76 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
 
 export interface LoadResult {
   state: AppState
-  // False when unreadable data could not be backed up: the original must not be overwritten.
   canPersist: boolean
   notice: StorageNotice | null
+  session: PersistenceSession
 }
 
-export function loadPersistedState(now: Date): LoadResult {
-  let rawValue: string | null
-  try {
-    rawValue = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY)
-  } catch {
-    // A read failure must never result in replacing an unseen save.
-    return { state: freshState(now), canPersist: false, notice: { ...STORAGE_NOTICES.unprotected, message: '无法读取本机存储，已暂停写入。请检查浏览器存储权限后刷新。' } }
+// The React app always passes its own session. The default also supports non-UI callers;
+// it never adopts an existing canonical save without loadPersistedState first.
+let defaultSession: PersistenceSession | undefined
+let defaultStorage: Storage | undefined
+export function getPersistenceSession() {
+  const storage = localStorage
+  if (!defaultSession || defaultStorage !== storage) {
+    defaultStorage = storage
+    defaultSession = new PersistenceSession(true)
   }
+  return defaultSession
+}
 
-  if (!rawValue) {
-    return { state: freshState(now), canPersist: true, notice: null }
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue)
-    if (typeof parsed?.version === 'number' && parsed.version > 4) return { state: freshState(now), canPersist: false, notice: { ...STORAGE_NOTICES.unprotected, message: '此存档来自更新版本，已暂停写入。请使用对应版本打开。' } }
-    const state = restoreStoredState(parsed, now)
-    const needsMigration = parsed.version !== 4
-    const migrationBackup = needsMigration ? writeBackup(rawValue, 'before-migration', now) : null
-    const protectedMigration = !needsMigration || (migrationBackup !== null && readBackup(migrationBackup) === rawValue)
-    return { state, canPersist: protectedMigration, notice: protectedMigration ? null : { ...STORAGE_NOTICES.unprotected, message: '无法保存升级前备份，已暂停写入。请先导出数据并释放存储空间。' } }
-  } catch {
-    const isBackedUp = backupUnreadableState(rawValue)
-    return {
-      state: freshState(now),
-      canPersist: isBackedUp,
-      notice: isBackedUp ? STORAGE_NOTICES.recovered : STORAGE_NOTICES.unprotected,
+export async function loadPersistedState(now: Date, session = new PersistenceSession()): Promise<LoadResult> {
+  defaultSession = session
+  // Access itself can throw (Safari storage permissions); exclusive catches that too.
+  let state = freshState(now)
+  await session.exclusive(() => {
+    defaultStorage = localStorage
+    const canonical = session.readCanonical()
+    // Canonical presence is authoritative, even if empty or corrupt. Never fall back.
+    const raw = canonical !== null ? canonical : localStorage.getItem(V2_STORAGE_KEY) ?? localStorage.getItem(V1_STORAGE_KEY)
+    if (raw !== null) {
+      session.recoveryRaw = raw
+      try {
+        const parsed: unknown = JSON.parse(raw)
+        const version = (parsed as { version?: unknown } | null)?.version
+        if (typeof version === 'number' && version > 4) {
+          session.block('此存档来自更新版本，已暂停写入。请使用对应版本打开。')
+          return
+        }
+        if (![undefined, 1, 2, 3, 4].includes(version as number | undefined)) throw new Error('Unsupported schema')
+        if (canonical !== null || version === 4) assertCanonicalState(parsed)
+        state = restoreStoredState(parsed, now)
+        assertUsableState(state)
+      } catch {
+        const backup = writeBackup(raw, 'unreadable', now)
+        const protectedRaw = backup !== null && readBackup(backup) === raw
+        session.block(RECOVERY_NOTICE, protectedRaw)
+        return
+      }
+      if (canonical === null) {
+        // Even schema 4 stranded under V2 needs an independent verified original copy.
+        const key = writeBackup(raw, 'before-migration', now)
+        if (key === null || readBackup(key) !== raw) {
+          session.block('无法保存并核验升级前备份，已暂停记录，原数据保留。请释放存储空间或检查权限后刷新。')
+          return
+        }
+      }
     }
-  }
+    if (!session.checkCurrent()) return
+    session.writeVerified(JSON.stringify(state), assertCanonicalState)
+    session.activate()
+  })
+  return { state, session, canPersist: session.getCanPersist(), notice: session.notice }
 }
 
 function freshState(now: Date) {
   return syncHistory(createInitialState(now))
 }
 
-function backupUnreadableState(rawValue: string) {
-  return writeBackup(rawValue, 'unreadable', new Date()) !== null
+export function assertCanonicalState(value: unknown) {
+  if ((value as { version?: unknown } | null)?.version !== 4) throw new Error('Expected schema 4')
+  assertStoredStateShape(value)
+  assertUsableState(value as AppState)
 }
 
 /**
@@ -694,7 +774,10 @@ function backupUnreadableState(rawValue: string) {
  */
 export function restoreStoredState(value: unknown, now: Date): AppState {
   assertStoredStateShape(value)
-  return syncHistory(ensureCurrentDay(migrateState(value, now), now))
+  const migrated = migrateState(value, now)
+  // Validate before day synchronization can replace a malformed current history row.
+  assertUsableState(migrated)
+  return syncHistory(ensureCurrentDay(migrated, now))
 }
 
 const RUN_STATUSES = ['idle', 'running', 'paused', 'completed']
@@ -835,16 +918,23 @@ function normalizeDayRecord(record: DayRecord): DayRecord {
   }
 }
 
-export function saveState(state: AppState) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  } catch {
-    reportSaveFailure()
-    return false
-  }
-
-  reportSaveSuccess()
-  return true
+export async function saveState(state: AppState, session = getPersistenceSession(), generation = session.generation): Promise<boolean> {
+  return await session.exclusive(() => {
+    // Standalone callers can bootstrap only an absent key, never replace unseen data.
+    const bootstrap = !session.readKnown
+    if (bootstrap) {
+      if (!session.canBootstrap) return false
+      session.canBootstrap = false
+      if (session.readCanonical() !== null || localStorage.getItem(V2_STORAGE_KEY) !== null || localStorage.getItem(V1_STORAGE_KEY) !== null) {
+        session.block('请先安全加载 V3 存档再保存。')
+        return false
+      }
+    }
+    if ((!bootstrap && !session.getCanPersist()) || session.generation !== generation || !session.checkCurrent()) return false
+    session.writeVerified(JSON.stringify(state), assertCanonicalState)
+    if (bootstrap) session.activate()
+    return true
+  }) ?? false
 }
 
 export function ensureCurrentDay(state: AppState, now: Date): AppState {

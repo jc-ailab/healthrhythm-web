@@ -4,9 +4,8 @@
 // a backup was made lives in a separate, best-effort index: losing or corrupting the index
 // never touches backup contents, it only makes those backups show as "time unknown".
 
-export const BACKUP_KEY_PREFIX = 'health-rhythm-web-backup-'
-// Deliberately outside BACKUP_KEY_PREFIX so it is never listed as a backup itself.
-const BACKUP_INDEX_KEY = 'health-rhythm-web-meta-backups'
+import { BACKUP_KEY_PREFIX, BACKUP_INDEX_KEY } from './storageKeys'
+export { BACKUP_KEY_PREFIX } from './storageKeys'
 
 /**
  * - unreadable: saved data that could not be loaded (possibly the only copy of it)

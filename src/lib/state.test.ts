@@ -1,3 +1,4 @@
+import { RECOVERY_NOTICE } from './persistence'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialState, toDayKey, type AppState } from './domain'
@@ -13,14 +14,13 @@ import {
   endRhythmState,
 } from './state'
 import {
-  STORAGE_NOTICES,
   dismissStorageNotice,
   getStorageNotice,
   resetStorageStatus,
   setStorageNotice,
 } from './storageStatus'
 
-const STORAGE_KEY = 'health-rhythm-web-v2'
+const STORAGE_KEY = 'health-rhythm-web-v3'
 
 function makeFakeStorage() {
   const data = new Map<string, string>()
@@ -73,8 +73,8 @@ function validSavedState(now = at(10)) {
 }
 
 describe('loadPersistedState', () => {
-  it('starts fresh with no notice when nothing is stored', () => {
-    const result = loadPersistedState(at(10))
+  it('starts fresh with no notice when nothing is stored', async () => {
+    const result = await loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
     expect(result.canPersist).toBe(true)
@@ -82,89 +82,89 @@ describe('loadPersistedState', () => {
     expect(backupKeys()).toHaveLength(0)
   })
 
-  it('round-trips a saved state without a notice', () => {
+  it('round-trips a saved state without a notice', async () => {
     const state = toggleRhythmState(stateAt(at(10)), at(10))
-    saveState(state)
+    await saveState(state)
 
-    const result = loadPersistedState(at(10, 0, 5))
+    const result = await loadPersistedState(at(10, 0, 5))
 
     expect(result.notice).toBeNull()
     expect(result.state.rhythm.status).toBe('running')
     expect(backupKeys()).toHaveLength(0)
   })
 
-  it('backs up corrupt JSON, recovers, and leaves the original untouched', () => {
+  it('backs up corrupt JSON, blocks writes, and leaves the original untouched', async () => {
     storage.data.set(STORAGE_KEY, '{not valid json')
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
-    expect(result.notice).toBe(STORAGE_NOTICES.recovered)
-    expect(result.canPersist).toBe(true)
+    expect(result.notice).toBe(RECOVERY_NOTICE)
+    expect(result.canPersist).toBe(false)
     expect(result.state.currentDayKey).toBe('2026-04-14')
     expect(backupKeys()).toEqual([backupKeyFor('{not valid json')])
     expect(storage.data.get(backupKeys()[0])).toBe('{not valid json')
     expect(storage.data.get(STORAGE_KEY)).toBe('{not valid json')
   })
 
-  it('treats a parseable but wrong-shaped value as unreadable', () => {
+  it('treats a parseable but wrong-shaped value as unreadable', async () => {
     const raw = JSON.stringify({ version: 3, library: { habits: [], exercises: [] }, rhythm: {} })
     storage.data.set(STORAGE_KEY, raw)
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
-    expect(result.notice).toBe(STORAGE_NOTICES.recovered)
+    expect(result.notice).toBe(RECOVERY_NOTICE)
     expect(storage.data.get(backupKeyFor(raw))).toBe(raw)
   })
 
-  it.each(['null', '[]', '"text"', '42'])('treats stored %s as unreadable', (raw) => {
+  it.each(['null', '[]', '"text"', '42'])('treats stored %s as unreadable', async (raw) => {
     storage.data.set(STORAGE_KEY, raw)
 
-    expect(loadPersistedState(at(10)).notice).toBe(STORAGE_NOTICES.recovered)
+    expect((await loadPersistedState(at(10))).notice).toBe(RECOVERY_NOTICE)
     expect(storage.data.get(backupKeyFor(raw))).toBe(raw)
   })
 
-  it('backs up a v3 state that fails during migration instead of silently wiping it', () => {
+  it('backs up a v3 state that fails during migration instead of silently wiping it', async () => {
     // This shape used to throw inside migrateState and reset everything with no trace.
     const saved = validSavedState()
     delete saved.strength.routines
     const raw = JSON.stringify(saved)
     storage.data.set(STORAGE_KEY, raw)
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
-    expect(result.notice).toBe(STORAGE_NOTICES.recovered)
+    expect(result.notice).toBe(RECOVERY_NOTICE)
     expect(storage.data.get(backupKeyFor(raw))).toBe(raw)
   })
 
-  it('does not overwrite unreadable data when the backup itself cannot be written', () => {
+  it('does not overwrite unreadable data when the backup itself cannot be written', async () => {
     storage.data.set(STORAGE_KEY, '{broken')
     storage.failWritesWhen((key) => key.startsWith('health-rhythm-web-backup-'))
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
-    expect(result.notice).toBe(STORAGE_NOTICES.unprotected)
+    expect(result.notice?.kind).toBe('unprotected')
     expect(result.canPersist).toBe(false)
     expect(storage.data.get(STORAGE_KEY)).toBe('{broken')
   })
 
-  it('writes the same backup key when recovery runs twice (StrictMode double init)', () => {
+  it('writes the same backup key when recovery runs twice (StrictMode double init)', async () => {
     storage.data.set(STORAGE_KEY, '{broken')
 
-    loadPersistedState(at(10))
-    loadPersistedState(at(10))
+    await loadPersistedState(at(10))
+    await loadPersistedState(at(10))
 
     expect(backupKeys()).toHaveLength(1)
   })
 
-  it('still loads an older v2 save that has no library or routines', () => {
+  it('still loads an older v2 save that has no library or routines', async () => {
     const saved = validSavedState()
     saved.version = 2
     delete saved.library
     delete saved.strength.routines
     delete saved.selectedTab
-    storage.data.set(STORAGE_KEY, JSON.stringify(saved))
+    storage.data.set('health-rhythm-web-v2', JSON.stringify(saved))
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
     expect(result.state.version).toBe(4)
@@ -173,13 +173,13 @@ describe('loadPersistedState', () => {
     expect(storage.data.get(backupKeys()[0])).toBe(JSON.stringify(saved))
   })
 
-  it('falls back to the legacy v1 key when the current key is empty', () => {
+  it('falls back to the legacy v1 key when the current key is empty', async () => {
     const saved = validSavedState()
     saved.version = 1
     delete saved.library
     storage.data.set('health-rhythm-web-v1', JSON.stringify(saved))
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
     expect(result.state.version).toBe(4)
@@ -187,7 +187,7 @@ describe('loadPersistedState', () => {
 
   describe.each([
     { version: 1, key: 'health-rhythm-web-v1' },
-    { version: 2, key: STORAGE_KEY },
+    { version: 2, key: 'health-rhythm-web-v2' },
   ])('a v$version save from before multi-capture habits', ({ version, key }) => {
     function legacySave() {
       const saved = validSavedState()
@@ -200,10 +200,10 @@ describe('loadPersistedState', () => {
       return saved
     }
 
-    it('migrates with an empty eventsByHabitId and keeps existing completions', () => {
+    it('migrates with an empty eventsByHabitId and keeps existing completions', async () => {
       storage.data.set(key, JSON.stringify(legacySave()))
 
-      const result = loadPersistedState(at(10))
+      const result = await loadPersistedState(at(10))
 
       expect(result.notice).toBeNull()
       expect(result.state.version).toBe(4)
@@ -211,106 +211,79 @@ describe('loadPersistedState', () => {
       expect(result.state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })
     })
 
-    it('builds the Today timeline for the migrated state without throwing', () => {
+    it('builds the Today timeline for the migrated state without throwing', async () => {
       storage.data.set(key, JSON.stringify(legacySave()))
-      const { state } = loadPersistedState(at(10))
+      const { state } = await loadPersistedState(at(10))
       const enabledHabits = state.library.habits.filter((habit) => habit.enabled)
 
       expect(() => buildTodayTimeline(state, enabledHabits, [])).not.toThrow()
     })
   })
 
-  it('blocks persistence when storage cannot be read at all', () => {
+  it('blocks persistence when storage cannot be read at all', async () => {
     vi.stubGlobal('localStorage', {
       getItem() {
         throw new Error('SecurityError')
       },
     })
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
-    expect(result.notice?.message).toContain('暂停写入')
+    expect(result.notice?.message).toContain('停止保存')
     expect(result.canPersist).toBe(false)
   })
 })
 
 describe('saveState', () => {
-  it('returns true and writes the state', () => {
-    expect(saveState(stateAt(at(10)))).toBe(true)
+  it('returns true and writes only the V3 canonical state', async () => {
+    expect(await saveState(stateAt(at(10)))).toBe(true)
     expect(storage.data.has(STORAGE_KEY)).toBe(true)
-    expect(getStorageNotice()).toBeNull()
+    expect(storage.data.has('health-rhythm-web-v2')).toBe(false)
   })
-
-  it('reports a failed write instead of throwing, then clears the notice on recovery', () => {
+  it('reports failed writes and requires reload before saving again', async () => {
     storage.failWritesWhen(() => true)
-
-    expect(saveState(stateAt(at(10)))).toBe(false)
-    expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
-
+    expect(await saveState(stateAt(at(10)))).toBe(false)
+    expect(getStorageNotice()?.kind).toBe('unprotected')
     storage.failWritesWhen(() => false)
-
-    expect(saveState(stateAt(at(10)))).toBe(true)
+    expect(await saveState(stateAt(at(10)))).toBe(false)
+    const loaded = await loadPersistedState(at(10))
+    expect(loaded.canPersist).toBe(true)
+    expect(await saveState(loaded.state, loaded.session)).toBe(true)
     expect(getStorageNotice()).toBeNull()
   })
-
-  it('does not clear an unrelated notice after a successful save', () => {
-    setStorageNotice(STORAGE_NOTICES.recovered)
-
-    saveState(stateAt(at(10)))
-
-    expect(getStorageNotice()).toBe(STORAGE_NOTICES.recovered)
+  it('never replaces a canonical snapshot that has not been loaded', async () => {
+    const original = JSON.stringify(stateAt(at(10)))
+    storage.data.set(STORAGE_KEY, original)
+    expect(await saveState(stateAt(at(11)))).toBe(false)
+    expect(storage.data.get(STORAGE_KEY)).toBe(original)
   })
-
-  describe('save-failed dismissal', () => {
-    const failingState = () => stateAt(at(10))
-
-    it('shows the notice on a failed save and hides it when dismissed', () => {
-      storage.failWritesWhen(() => true)
-
-      saveState(failingState())
-      expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
-
-      dismissStorageNotice()
-      expect(getStorageNotice()).toBeNull()
-    })
-
-    it('does not re-show the notice while saves keep failing', () => {
-      storage.failWritesWhen(() => true)
-      saveState(failingState())
-      dismissStorageNotice()
-
-      for (let tick = 0; tick < 20; tick += 1) {
-        expect(saveState(failingState())).toBe(false)
-      }
-
-      expect(getStorageNotice()).toBeNull()
-    })
-
-    it('resets the dismissal after a successful save so a later failure shows again', () => {
-      storage.failWritesWhen(() => true)
-      saveState(failingState())
-      dismissStorageNotice()
-      saveState(failingState())
-      expect(getStorageNotice()).toBeNull()
-
-      storage.failWritesWhen(() => false)
-      expect(saveState(failingState())).toBe(true)
-      expect(getStorageNotice()).toBeNull()
-
-      storage.failWritesWhen(() => true)
-      saveState(failingState())
-      expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
-    })
-
-    it('does not latch when a different notice is dismissed', () => {
-      setStorageNotice(STORAGE_NOTICES.recovered)
-      dismissStorageNotice()
-
-      storage.failWritesWhen(() => true)
-      saveState(failingState())
-
-      expect(getStorageNotice()).toBe(STORAGE_NOTICES.saveFailed)
-    })
+  it('can dismiss a notice without enabling blocked persistence', async () => {
+    storage.failWritesWhen(() => true)
+    await saveState(stateAt(at(10)))
+    dismissStorageNotice()
+    expect(getStorageNotice()).toBeNull()
+    storage.failWritesWhen(() => false)
+    expect(await saveState(stateAt(at(10)))).toBe(false)
+  })
+  it('does not repeatedly attempt writes after failure', async () => {
+    let attempts = 0
+    storage.failWritesWhen(() => { attempts++; return true })
+    await saveState(stateAt(at(10)))
+    for (let tick = 0; tick < 20; tick++) expect(await saveState(stateAt(at(10)))).toBe(false)
+    expect(attempts).toBe(1)
+  })
+  it('updates notice messages even if their kind is unchanged', () => {
+    setStorageNotice({ kind: 'unprotected', message: 'first' })
+    setStorageNotice({ kind: 'unprotected', message: 'second' })
+    expect(getStorageNotice()?.message).toBe('second')
+  })
+  it('refuses writes after an initialization read failure even if storage recovers', async () => {
+    const realStorage = localStorage
+    vi.stubGlobal('localStorage', { getItem() { throw new Error('denied') } })
+    const loaded = await loadPersistedState(at(10))
+    vi.stubGlobal('localStorage', realStorage)
+    expect(await saveState(loaded.state, loaded.session)).toBe(false)
+    expect(storage.data.has(STORAGE_KEY)).toBe(false)
   })
 })
 

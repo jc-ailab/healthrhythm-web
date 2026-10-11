@@ -2,6 +2,8 @@
 // `replaceWithSafetyCopy`, which never swaps data in before a copy of the current state is
 // stored and the new state is written.
 
+import { V2_STORAGE_KEY, V1_STORAGE_KEY } from './storageKeys'
+import type { PersistenceSession } from './persistence'
 import { MOVEMENT_TYPES, toDayKey, type AppState, type DayRecord } from './domain'
 import {
   buildDailyHistorySummary,
@@ -10,7 +12,8 @@ import {
   historyEarliestDayKey,
   movementDefaultsFor,
   restoreStoredState,
-  saveState,
+  getPersistenceSession,
+  assertCanonicalState,
 } from './state'
 import { pruneSafetyCopies, readBackup, writeBackup, type BackupReason } from './backupStore'
 
@@ -50,7 +53,7 @@ export const DATA_ERRORS = {
   invalid: '文件内容不完整或已损坏，无法导入。',
   backupMissing: '找不到这份备份，可能已被删除。',
   backupFailed: '无法先保存当前数据的备份（存储空间可能已满），已取消，当前数据未改变。请先删除不需要的备份。',
-  saveFailed: '无法写入新数据，已取消，当前数据未改变。',
+  saveFailed: '无法安全写入或核验新数据，已暂停保存。请保留备份并刷新检查；不要清除浏览器数据。',
 } as const
 
 export function exportFileName(now: Date) {
@@ -123,26 +126,37 @@ export function parseBackup(key: string, now: Date): ParseResult {
  * `next`. Stops before anything is replaced if either step fails. On success the caller swaps
  * `next` into memory.
  */
-export function replaceWithSafetyCopy(
+export async function replaceWithSafetyCopy(
   current: AppState,
   next: AppState,
   reason: Extract<BackupReason, 'before-import' | 'before-restore'>,
   now: Date,
   // The backup being restored from: cleanup must never remove it as a side effect.
   restoredKey?: string,
-): ReplaceResult {
-  const currentRaw = JSON.stringify(current)
-  const backupKey = writeBackup(currentRaw, reason, now)
-  if (backupKey === null || readBackup(backupKey) !== currentRaw) {
-    return { ok: false, error: DATA_ERRORS.backupFailed }
-  }
+  session: PersistenceSession = getPersistenceSession(),
+): Promise<ReplaceResult> {
+  return await session.exclusive((): ReplaceResult => {
+    const bootstrap = !session.readKnown
+    if (bootstrap) {
+      if (!session.canBootstrap) return { ok: false, error: DATA_ERRORS.saveFailed }
+      session.canBootstrap = false
+      if (session.readCanonical() !== null || localStorage.getItem(V2_STORAGE_KEY) !== null || localStorage.getItem(V1_STORAGE_KEY) !== null) return { ok: false, error: DATA_ERRORS.saveFailed }
+    }
+    if ((!bootstrap && !session.getCanPersist() && !session.getCanRecover()) || !session.checkCurrent()) return { ok: false, error: DATA_ERRORS.saveFailed }
+    assertCanonicalState(next)
+    const currentRaw = session.getCanRecover() ? session.recoveryRaw! : JSON.stringify(current)
+    const backupKey = writeBackup(currentRaw, reason, now)
+    if (backupKey === null || readBackup(backupKey) !== currentRaw) {
+      return { ok: false, error: DATA_ERRORS.backupFailed }
+    }
 
-  if (!saveState(next)) {
-    return { ok: false, error: DATA_ERRORS.saveFailed }
-  }
+    session.writeVerified(JSON.stringify(next), assertCanonicalState)
+    session.generation += 1
+    session.activate()
 
-  pruneSafetyCopies(SAFETY_COPIES_KEPT, restoredKey ? [backupKey, restoredKey] : [backupKey])
-  return { ok: true, backupKey }
+    pruneSafetyCopies(SAFETY_COPIES_KEPT, restoredKey ? [backupKey, restoredKey] : [backupKey])
+    return { ok: true, backupKey }
+  }) ?? { ok: false, error: DATA_ERRORS.saveFailed }
 }
 
 export function summarizeState(state: AppState): DataSummary {
@@ -232,7 +246,7 @@ const isMovementSession = (entry: Record<string, unknown>) =>
   (entry.intensity === undefined || isString(entry.intensity)) &&
   (entry.note === undefined || isString(entry.note))
 
-function assertUsableState(state: AppState) {
+export function assertUsableState(state: AppState) {
   if (!isString(state.currentDayKey) || !DAY_KEY_PATTERN.test(state.currentDayKey)) fail('currentDayKey')
 
   checkArray(state.rhythm.entriesToday, 'rhythm.entriesToday', isRhythmEntry)

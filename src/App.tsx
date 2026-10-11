@@ -136,9 +136,9 @@ function App() {
       {app.storageNotice && (
         <div className="storage-notice" role="status">
           <p>{app.storageNotice.message}</p>
-          <button type="button" onClick={app.dismissStorageNotice}>
-            知道了
-          </button>
+          {app.storageNotice.kind !== 'unprotected' && (
+            <button type="button" onClick={app.dismissStorageNotice}>知道了</button>
+          )}
         </div>
       )}
 
@@ -231,7 +231,7 @@ function App() {
           <LibraryTab
             section={librarySection}
             dataPanel={
-              <DataBackupSection state={app.state} canPersist={app.canPersist} onReplace={app.replaceAppState} />
+              <DataBackupSection state={app.state} canPersist={app.canPersist} canRecover={app.canRecover} session={app.persistenceSession} onReplace={app.replaceAppState} />
             }
             habits={app.habitLibrary}
             exercises={app.exerciseLibrary}

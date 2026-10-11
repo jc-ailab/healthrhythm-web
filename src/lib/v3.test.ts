@@ -55,9 +55,9 @@ describe('V3 safe migration', () => {
     const old = v2(); old.library.habits.find((item: HabitDefinition) => item.id === 'mindfulEating').name = 'Walking'
     expect(habit(restoreStoredState(old, now), 'mindfulEating').name).toBe('Walking')
   })
-  it('saves the original bytes once before migration and retains them through backup pruning', () => {
+  it('saves the original bytes once before migration and retains them through backup pruning', async () => {
     const raw = JSON.stringify(v2()); storage.set(key, raw)
-    loadPersistedState(now); loadPersistedState(now)
+    await loadPersistedState(now); await loadPersistedState(now)
     expect(storage.get(key)).toBe(raw)
     expect(listBackups()).toHaveLength(1)
     expect(listBackups()[0].raw).toBe(raw)
@@ -65,17 +65,17 @@ describe('V3 safe migration', () => {
     pruneSafetyCopies(0, [])
     expect(listBackups()[0].raw).toBe(raw)
   })
-  it('blocks persistence if a migration safety copy cannot be saved', () => {
+  it('blocks persistence if a migration safety copy cannot be saved', async () => {
     const raw = JSON.stringify(v2()); storage.set(key, raw)
     vi.stubGlobal('localStorage', { getItem: (id: string) => storage.get(id) ?? null, setItem: () => { throw new Error('quota') } })
-    const loaded = loadPersistedState(now)
+    const loaded = await loadPersistedState(now)
     expect(loaded.state.today.movementSessions[0].id).toBe('v2-movement-existing')
     expect(loaded.canPersist).toBe(false)
     expect(storage.get(key)).toBe(raw)
   })
-  it('does not write over a newer schema', () => {
+  it('does not write over a newer schema', async () => {
     const future = v2(); future.version = 99; const raw = JSON.stringify(future); storage.set(key, raw)
-    expect(loadPersistedState(now).canPersist).toBe(false)
+    expect((await loadPersistedState(now)).canPersist).toBe(false)
     expect(storage.get(key)).toBe(raw)
   })
   it('preserves names edited back to English after migration', () => {
@@ -102,23 +102,23 @@ describe('V3 safe migration', () => {
 })
 
 describe('V3 persistence and logging', () => {
-  it('persists within-group ordering, group moves, frequency and visibility through refresh', () => {
+  it('persists within-group ordering, group moves, frequency and visibility through refresh', async () => {
     let state = fresh()
     state = { ...state, library: { ...state.library, habits: moveHabit(state.library.habits, 'earlySleep', 'up') } }
     state.library.habits = state.library.habits.map((item) => item.id === 'walking' ? { ...item, group: '其他活动', frequency: 'weekly', showOnToday: false } : item)
     const ids = state.library.habits.map((item) => item.id)
-    saveState(state)
-    const loaded = loadPersistedState(now).state
+    await saveState(state)
+    const loaded = (await loadPersistedState(now)).state
     expect(loaded.library.habits.map((item) => item.id)).toEqual(ids)
     expect(ids.indexOf('earlySleep')).toBeLessThan(ids.indexOf('mindfulEating'))
     expect(habit(loaded, 'walking')).toMatchObject({ group: '其他活动', frequency: 'weekly', showOnToday: false })
   })
-  it('supports custom multi-capture habits across navigation, refresh, midnight and export/import', () => {
+  it('supports custom multi-capture habits across navigation, refresh, midnight and export/import', async () => {
     let state = fresh()
     state.library.habits.push({ id: 'custom-capture', name: '自定义记录', category: '', note: '', enabled: true, showOnToday: true, recordingMode: 'captures' })
     for (let i = 0; i < 3; i++) state = toggleHabitState(state, 'custom-capture', new Date(now.getTime() + i * 1000))
-    state.selectedTab = 'history'; saveState(state)
-    state = loadPersistedState(now).state
+    state.selectedTab = 'history'; await saveState(state)
+    state = (await loadPersistedState(now)).state
     expect(state.today.eventsByHabitId['custom-capture']).toHaveLength(3)
     expect(completedHabitIds(state.today.completionTimesByHabitId, state.today.eventsByHabitId)).toEqual(['custom-capture'])
     state = ensureCurrentDay(state, tomorrow)
@@ -143,15 +143,15 @@ describe('V3 persistence and logging', () => {
     expect(summary.habitCompletionsCount).toBe(1)
     expect(summary.habitCapturesCount).toBe(1)
   })
-  it('logs a custom duration activity once with its name in Today and its duration in History', () => {
+  it('logs a custom duration activity once with its name in Today and its duration in History', async () => {
     let state = fresh()
     state.library.habits.push({ id: 'custom-duration', name: '我的活动', category: '', note: '', enabled: true, showOnToday: true, recordingMode: 'duration' })
     state = addMovementSessionState(state, { typeId: 'custom-duration', durationMinutes: 22 }, now)
     expect(state.today.movementSessions).toHaveLength(1)
     expect(buildTodayTimeline(state, [], [])).toContainEqual(expect.objectContaining({ title: '我的活动', summary: '22 分钟' }))
     expect(buildDailyHistorySummary(state.history[0], []).movementTotalMinutes).toBe(22)
-    saveState(state)
-    expect(loadPersistedState(now).state.today.movementSessions).toEqual(state.today.movementSessions)
+    await saveState(state)
+    expect((await loadPersistedState(now)).state.today.movementSessions).toEqual(state.today.movementSessions)
   })
   it('records partial core completion through the original foundation path with no duplicate strength record', () => {
     let state = toggleStrengthExerciseState(fresh(), 'lowerAbs', now)
@@ -163,7 +163,7 @@ describe('V3 persistence and logging', () => {
     state = toggleStrengthExerciseState(state, 'lowerAbs', now)
     expect(Object.keys(state.today.foundationCompletedAt)).toEqual(['pelvicFloor'])
   })
-  it('shares completion for an exercise in core and multiple routines and preserves all definitions on refresh', () => {
+  it('shares completion for an exercise in core and multiple routines and preserves all definitions on refresh', async () => {
     let state = fresh()
     const id = 'routine-a-glute-bridge'
     state.library.exercises = state.library.exercises.map((exercise) => exercise.id === id ? { ...exercise, dailyCore: true, trying: true } : exercise)
@@ -171,17 +171,17 @@ describe('V3 persistence and logging', () => {
     state = toggleStrengthExerciseState(state, id, now)
     expect(state.strength.completedExerciseIds).toEqual([id])
     expect(buildHistorySummary(state.history, [state.currentDayKey]).strengthCompletionsCount).toBe(1)
-    saveState(state)
-    expect(loadPersistedState(now).state.library.exercises.find((exercise) => exercise.id === id)).toMatchObject({ dailyCore: true, trying: true })
+    await saveState(state)
+    expect((await loadPersistedState(now)).state.library.exercises.find((exercise) => exercise.id === id)).toMatchObject({ dailyCore: true, trying: true })
     state = toggleStrengthExerciseState(state, id, now)
     expect(state.strength.completedExerciseIds).toEqual([])
   })
-  it('shows persisted routine overrides instead of the shared library defaults', () => {
+  it('shows persisted routine overrides instead of the shared library defaults', async () => {
     const state = fresh()
     const id = 'routine-a-glute-bridge'
     state.strength.routines[0].exercises = [{ exerciseId: id, customSets: '4 组', customVolume: '6 次', customTime: '5 分钟' }]
-    saveState(state)
-    const restored = loadPersistedState(now).state
+    await saveState(state)
+    const restored = (await loadPersistedState(now)).state
     const resolved = resolveStrengthRoutines(restored.library.exercises, restored.strength.routines)[0].exercises[0]
     expect(exercisePrescription(resolved)).toBe('4 组 · 6 次 · 5 分钟')
     expect(restored.library.exercises.find((exercise) => exercise.id === id)?.suggestedSets).toBe('2 组')

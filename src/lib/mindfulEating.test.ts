@@ -15,7 +15,6 @@ import { resetStorageStatus } from './storageStatus'
 // Every step goes through the real Today tap (toggleHabitState) and the real day change
 // (ensureCurrentDay); nothing writes history records directly.
 
-const STORAGE_KEY = 'health-rhythm-web-v2'
 
 let storage: Map<string, string>
 
@@ -109,11 +108,11 @@ describe('Mindful eating captures in History', () => {
     expect(monthOf(state, '2026-04').mindfulEatingDaysCount).toBe(2)
   })
 
-  it('survives a save and reload on the next day', () => {
+  it('survives a save and reload on the next day', async () => {
     let state = tap(startOnTuesday(), 'mindfulEating', tue(12))
-    saveState(state)
+    await saveState(state)
 
-    state = loadPersistedState(wed(7)).state
+    state = (await loadPersistedState(wed(7))).state
 
     expect(recordFor(state, '2026-04-14').habitEvents.mindfulEating).toEqual([tue(12).toISOString()])
     expect(weekOf(state, '2026-04-15').mindfulEatingDaysCount).toBe(1)
@@ -148,10 +147,10 @@ describe('older saves without habitEvents', () => {
     return saved
   }
 
-  it.each([1, 2, 3] as const)('loads a v%s save with an empty default and keeps existing completions', (version) => {
-    storage.set(version === 1 ? 'health-rhythm-web-v1' : STORAGE_KEY, JSON.stringify(oldSave(version)))
+  it.each([1, 2, 3] as const)('loads a v%s save with an empty default and keeps existing completions', async (version) => {
+    storage.set(version === 1 ? 'health-rhythm-web-v1' : 'health-rhythm-web-v2', JSON.stringify(oldSave(version)))
 
-    const { state, notice } = loadPersistedState(wed(8))
+    const { state, notice } = await loadPersistedState(wed(8))
 
     expect(notice).toBeNull()
     expect(state.history.every((record) => typeof record.habitEvents === 'object' && record.habitEvents !== null)).toBe(true)
@@ -160,12 +159,12 @@ describe('older saves without habitEvents', () => {
     expect(weekOf(state, '2026-04-15')).toMatchObject({ earlySleepDaysCount: 1, mindfulEatingDaysCount: 0 })
   })
 
-  it('still counts an older toggle-style Mindful eating completion as done', () => {
+  it('still counts an older toggle-style Mindful eating completion as done', async () => {
     const saved = oldSave(3)
     saved.history.find((record: { dayKey: string }) => record.dayKey === '2026-04-14').habits.mindfulEating = tue(12).toISOString()
-    storage.set(STORAGE_KEY, JSON.stringify(saved))
+    storage.set('health-rhythm-web-v2', JSON.stringify(saved))
 
-    const { state } = loadPersistedState(wed(8))
+    const { state } = await loadPersistedState(wed(8))
 
     expect(buildDailyHistorySummary(recordFor(state, '2026-04-14'), [])).toMatchObject({
       mindfulEatingCompleted: true,
