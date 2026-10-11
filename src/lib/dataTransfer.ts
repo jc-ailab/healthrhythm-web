@@ -17,7 +17,7 @@ import { pruneSafetyCopies, readBackup, writeBackup, type BackupReason } from '.
 export const EXPORT_FORMAT = 'healthrhythm-export'
 export const EXPORT_FORMAT_VERSION = 1
 /** Saves with these `version` values are understood by migrateState. */
-const SUPPORTED_STATE_VERSIONS: readonly unknown[] = [undefined, 1, 2, 3]
+const SUPPORTED_STATE_VERSIONS: readonly unknown[] = [undefined, 1, 2, 3, 4]
 // localStorage holds roughly 5 MB per site, so nothing larger could be stored anyway.
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024
 export const SAFETY_COPIES_KEPT = 5

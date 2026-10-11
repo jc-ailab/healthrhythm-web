@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 
 import './styles.css'
+import { HABIT_GROUPS, FREQUENCY_LABELS, MODE_LABELS, habitMode, habitGroup, completedHabitIds, coreExercises, exercisePrescription, type HabitGroup, type RecordingMode, type HabitFrequency } from './lib/v3'
 import { DataBackupSection } from './DataBackupSection'
 import {
   BREATH_MODE_LABELS,
@@ -11,7 +12,6 @@ import {
   MOVEMENT_INTENSITY_LABELS,
   MOVEMENT_MAX_MINUTES,
   MOVEMENT_TYPES,
-  MULTI_CAPTURE_HABIT_IDS,
   RHYTHM_BPM,
   RHYTHM_DURATIONS,
   formatClockTime,
@@ -56,6 +56,9 @@ type RoutineDraft = {
 }
 
 type HabitDraft = {
+  group?: HabitGroup
+  recordingMode?: RecordingMode
+  frequency?: HabitFrequency
   id?: string
   name: string
   category: string
@@ -66,6 +69,10 @@ type HabitDraft = {
 }
 
 type ExerciseDraft = {
+  routineIds?: string[]
+  dailyCore?: boolean
+  trying?: boolean
+  foundationId?: FoundationItemId
   id?: string
   name: string
   category: string
@@ -79,6 +86,7 @@ type ExerciseDraft = {
 }
 
 const EMPTY_HABIT_DRAFT: HabitDraft = {
+  group: '每日习惯', recordingMode: 'single', frequency: 'daily',
   name: '',
   category: '',
   note: '',
@@ -87,6 +95,7 @@ const EMPTY_HABIT_DRAFT: HabitDraft = {
 }
 
 const EMPTY_EXERCISE_DRAFT: ExerciseDraft = {
+  dailyCore: false, trying: true, routineIds: [],
   name: '',
   category: '',
   description: '',
@@ -110,25 +119,10 @@ function App() {
   const selectedRoutine =
     app.strengthRoutines.find((routine) => routine.id === selectedRoutineId) ?? app.strengthRoutines[0]
 
-  const todayHabits = app.visibleTodayHabits.map((habit) => ({
-    ...habit,
-    completedAt: app.state.today.completionTimesByHabitId[habit.id] ?? null,
-    captureCount: MULTI_CAPTURE_HABIT_IDS.has(habit.id)
-      ? (app.state.today.eventsByHabitId[habit.id]?.length ?? 0)
-      : null,
-  }))
-
-  const habitCompletionCount =
-    Object.keys(app.state.today.completionTimesByHabitId).length +
-    Object.entries(app.state.today.eventsByHabitId)
-      .filter(([, events]) => (events?.length ?? 0) > 0)
-      .length
-
-  const foundationToday: FoundationTileItem[] = FOUNDATION_ITEMS.map((item) => ({
-    ...item,
-    completedAt: app.state.today.foundationCompletedAt[item.id] ?? null,
-  }))
-
+  const todayHabits = app.habitLibrary.filter((habit) => habit.enabled && habit.showOnToday)
+  const habitCompletionCount = completedHabitIds(app.state.today.completionTimesByHabitId, app.state.today.eventsByHabitId).length
+  const openManagement = (section: LibrarySection) => { setLibrarySection(section); app.selectTab('library') }
+  const completedExerciseIds = new Set([...app.state.strength.completedExerciseIds, ...Object.keys(app.state.today.foundationCompletedAt)])
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -136,14 +130,14 @@ function App() {
           <p className="eyebrow">HealthRhythm Web</p>
           <h1>{tabTitle(selectedTab)}</h1>
         </div>
-        <p className="top-bar-note">{tabNote(selectedTab)}</p>
+        <button className="management-entry" type="button" onClick={() => selectedTab === 'library' ? app.selectTab('today') : openManagement('habits')}>{selectedTab === 'library' ? '返回今日' : '管理'}</button>
       </header>
 
       {app.storageNotice && (
         <div className="storage-notice" role="status">
           <p>{app.storageNotice.message}</p>
           <button type="button" onClick={app.dismissStorageNotice}>
-            Dismiss
+            知道了
           </button>
         </div>
       )}
@@ -190,31 +184,24 @@ function App() {
         )}
 
         {selectedTab === 'today' && (
-          <TodayTab
-            currentDayLabel={formatFullDate(new Date())}
-            rhythmTotalMinutes={app.rhythmTotalMinutesToday}
-            breathSessions={app.breathTotalSessionsToday}
-            breathRounds={app.breathTotalRoundsToday}
-            strengthSummary={app.strengthSummaryToday}
-            habitCompletionCount={habitCompletionCount}
-            habits={todayHabits}
-            timelineEvents={app.todayTimeline}
-            onToggleHabit={app.toggleHabit}
-            foundation={foundationToday}
-            onToggleFoundation={app.toggleFoundationItem}
-            dayKey={app.state.currentDayKey}
-            movementSessions={app.state.today.movementSessions}
-            movementDefaultsFor={app.movementDefaultsFor}
-            onAddMovement={app.addMovementSession}
-            onUpdateMovement={app.updateMovementSession}
-            onDeleteMovement={app.deleteMovementSession}
-          />
+          <TodayTab currentDayLabel={formatFullDate(new Date())} rhythmTotalMinutes={app.rhythmTotalMinutesToday}
+            breathSessions={app.breathTotalSessionsToday} breathRounds={app.breathTotalRoundsToday}
+            strengthSummary={app.strengthSummaryToday} habitCompletionCount={habitCompletionCount}
+            habitCaptureCount={Object.values(app.state.today.eventsByHabitId).reduce((sum, captures) => sum + (captures?.length ?? 0), 0)}
+            timelineEvents={app.todayTimeline} movementSessions={app.state.today.movementSessions} />
+        )}
+        {selectedTab === 'habit' && (
+          <HabitTab habits={todayHabits} allHabits={app.habitLibrary} today={app.state.today}
+            onToggle={app.toggleHabit} onAddMovement={app.addMovementSession} onSave={app.saveHabit} onMove={app.moveHabit}
+            onManage={() => openManagement('habits')} defaultsFor={app.movementDefaultsFor} />
         )}
 
         {selectedTab === 'history' && (
           <HistoryTab
             selectedDayKey={app.selectedHistoryDayKey}
             maxDayKey={app.state.currentDayKey}
+            habits={app.habitLibrary}
+            exercises={app.exerciseLibrary}
             dailySummary={app.historyDailySummary(app.selectedHistoryDayKey)}
             weekSummary={app.historyWeekSummary}
             monthSummary={app.historyMonthSummary}
@@ -227,11 +214,14 @@ function App() {
           />
         )}
 
-        {selectedTab === 'strength' && selectedRoutine && (
+        {selectedTab === 'strength' && (
           <StrengthTab
             routines={app.strengthRoutines}
-            selectedRoutineId={selectedRoutine.id}
-            completedExerciseIds={new Set(app.state.strength.completedExerciseIds)}
+            selectedRoutineId={selectedRoutine?.id ?? ''}
+            completedExerciseIds={completedExerciseIds}
+            exercises={app.exerciseLibrary}
+            onManage={() => openManagement('routines')}
+            onEditExercise={(exercise) => { setExerciseDraft({ ...exercise, routineIds: app.strengthRoutineLibrary.filter((routine) => routine.exercises.some((item) => item.exerciseId === exercise.id)).map((routine) => routine.id) }); openManagement('exercises') }}
             onSelectRoutine={setSelectedRoutineId}
             onToggleExercise={app.toggleStrengthExercise}
           />
@@ -263,6 +253,7 @@ function App() {
             }}
             onEditHabit={(habit) => {
               setHabitDraft({
+                ...habit,
                 id: habit.id,
                 name: habit.name,
                 category: habit.category,
@@ -279,9 +270,10 @@ function App() {
             onSaveHabit={() => {
               if (!habitDraft) return
               app.saveHabit({
+                ...habitDraft,
                 id: habitDraft.id ?? makeLocalId('habit'),
                 name: habitDraft.name.trim(),
-                category: habitDraft.category.trim() || 'General',
+                category: habitDraft.category.trim() || '其他',
                 note: habitDraft.note.trim(),
                 enabled: habitDraft.enabled,
                 showOnToday: habitDraft.showOnToday,
@@ -296,6 +288,8 @@ function App() {
             }}
             onEditExercise={(exercise) => {
               setExerciseDraft({
+                ...exercise,
+                routineIds: app.strengthRoutineLibrary.filter((routine) => routine.exercises.some((item) => item.exerciseId === exercise.id)).map((routine) => routine.id),
                 id: exercise.id,
                 name: exercise.name,
                 category: exercise.category,
@@ -314,10 +308,13 @@ function App() {
             }
             onSaveExercise={() => {
               if (!exerciseDraft) return
+              const id = exerciseDraft.id ?? makeLocalId('exercise')
+              const { routineIds, ...definition } = exerciseDraft
               app.saveExercise({
-                id: exerciseDraft.id ?? makeLocalId('exercise'),
+                ...definition,
+                id,
                 name: exerciseDraft.name.trim(),
-                category: exerciseDraft.category.trim() || 'General',
+                category: exerciseDraft.category.trim() || '其他',
                 description: exerciseDraft.description.trim(),
                 caution: exerciseDraft.caution.trim(),
                 suggestedVolume: exerciseDraft.suggestedVolume.trim(),
@@ -326,6 +323,13 @@ function App() {
                 enabled: exerciseDraft.enabled,
                 isBuiltIn: exerciseDraft.isBuiltIn,
               })
+              if (routineIds) {
+                for (const routine of app.strengthRoutineLibrary) {
+                  const included = routine.exercises.some((item) => item.exerciseId === id)
+                  if (routineIds.includes(routine.id) && !included) app.addExerciseToRoutine(routine.id, id)
+                  if (!routineIds.includes(routine.id) && included) app.saveStrengthRoutine({ ...routine, exercises: routine.exercises.filter((item) => item.exerciseId !== id) })
+                }
+              }
               setExerciseDraft(null)
             }}
             onCancelExercise={() => setExerciseDraft(null)}
@@ -379,19 +383,20 @@ function App() {
         )}
       </main>
 
-      <nav className="tab-bar" aria-label="Main">
+      <nav className="tab-bar" aria-label="主导航">
         {([
-          ['rhythm', 'Rhythm'],
-          ['breath', 'Breath'],
-          ['strength', 'Strength'],
-          ['today', 'Today'],
-          ['history', 'History'],
-          ['library', 'Library'],
+          ['today', '今日'],
+          ['rhythm', '节律'],
+          ['breath', '呼吸'],
+          ['strength', '力量'],
+          ['habit', '习惯'],
+          ['history', '历史'],
         ] as [TabKey, string][]).map(([tab, label]) => (
           <button
             key={tab}
             className={`tab-button${selectedTab === tab ? ' is-active' : ''}`}
             type="button"
+            aria-current={selectedTab === tab ? 'page' : undefined}
             onClick={() => app.selectTab(tab)}
           >
             {label}
@@ -410,40 +415,16 @@ interface TodaySummaryCompactProps {
   breathRounds: number
   strengthSummary: string
   habitCompletionCount: number
-  habitCount: number
-  foundationCompletedCount: number
+  habitCaptureCount: number
   movementTotalMinutes: number
 }
-
 function TodaySummaryCompact(props: TodaySummaryCompactProps) {
-  return (
-    <div className="today-summary-strip">
-      <div className="today-summary-item">
-        <span>Rhythm</span>
-        <strong>{props.rhythmTotalMinutes} min</strong>
-      </div>
-      <div className="today-summary-item">
-        <span>Breath</span>
-        <strong>{props.breathSessions > 0 ? `${props.breathRounds} rds` : '—'}</strong>
-      </div>
-      <div className="today-summary-item">
-        <span>Strength</span>
-        <strong>{props.strengthSummary || '—'}</strong>
-      </div>
-      <div className="today-summary-item">
-        <span>Habits</span>
-        <strong>{props.habitCount > 0 ? `${props.habitCompletionCount}/${props.habitCount}` : '—'}</strong>
-      </div>
-      <div className="today-summary-item">
-        <span>基础</span>
-        <strong>{props.foundationCompletedCount}/{FOUNDATION_ITEMS.length}</strong>
-      </div>
-      <div className="today-summary-item">
-        <span>运动</span>
-        <strong>{props.movementTotalMinutes > 0 ? `${props.movementTotalMinutes} 分钟` : '—'}</strong>
-      </div>
-    </div>
-  )
+  return <div className="today-summary-strip">
+    <div className="today-summary-item"><span>节律</span><strong>{props.rhythmTotalMinutes} 分钟</strong></div>
+    <div className="today-summary-item"><span>呼吸</span><strong>{props.breathSessions} 次 · {props.breathRounds} 轮</strong></div>
+    <div className="today-summary-item"><span>力量</span><strong>{props.strengthSummary}</strong></div>
+    <div className="today-summary-item"><span>习惯与运动</span><strong>{props.habitCompletionCount} 项 · {props.movementTotalMinutes} 分钟</strong><small>{props.habitCaptureCount} 次捕捉</small></div>
+  </div>
 }
 
 // ─── Rhythm Tab ──────────────────────────────────────────────────────────────
@@ -468,11 +449,11 @@ function RhythmTab(props: RhythmTabProps) {
     <div className="page-grid">
       <Card className="card-tight">
         <div className="hero-metric">
-          <span className="eyebrow">Fixed tempo</span>
+          <span className="eyebrow">固定节拍</span>
           <strong>{props.bpm} BPM</strong>
         </div>
 
-        <div className="chip-row is-single-line" role="group" aria-label="Rhythm duration">
+        <div className="chip-row is-single-line" role="group" aria-label="节律时长">
           {props.durations.map((minutes) => (
             <button
               key={minutes}
@@ -481,24 +462,24 @@ function RhythmTab(props: RhythmTabProps) {
               onClick={() => props.onSelectDuration(minutes)}
               disabled={props.status === 'running' || props.status === 'paused'}
             >
-              {minutes} min
+              {minutes} 分钟
             </button>
           ))}
         </div>
 
         <div className="status-panel status-panel-tight">
           <div>
-            <span className="status-label">Countdown</span>
+            <span className="status-label">倒计时</span>
             <strong>{formatCountdown(props.remainingSeconds)}</strong>
           </div>
           <div>
-            <span className="status-label">Status</span>
+            <span className="status-label">状态</span>
             <strong>{rhythmStatusLabel(props.status)}</strong>
           </div>
         </div>
 
         <ToggleRow
-          label="Metronome sound"
+          label="节拍声音"
           isEnabled={props.isSoundEnabled}
           onToggle={props.onSoundToggle}
         />
@@ -513,22 +494,22 @@ function RhythmTab(props: RhythmTabProps) {
             onClick={props.onEnd}
             disabled={props.status === 'idle'}
           >
-            End
+            结束
           </button>
         </div>
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader title="Today activity" />
+        <SectionHeader title="今日记录" />
         {props.entriesToday.length === 0 ? (
-          <EmptyState text="No rhythm sessions yet today." />
+          <EmptyState text="今天还没有节律记录。" />
         ) : (
           <div className="event-stream">
             {props.entriesToday.map((entry) => (
               <div key={entry.id} className="event-row">
                 <span className="event-time">{formatClockTime(entry.startAt)}</span>
-                <span className="event-title">Rhythm</span>
-                <span className="event-summary">{Math.max(1, Math.floor(entry.durationSeconds / 60))} min</span>
+                <span className="event-title">节律</span>
+                <span className="event-summary">{Math.max(1, Math.floor(entry.durationSeconds / 60))} 分钟</span>
               </div>
             ))}
           </div>
@@ -572,7 +553,7 @@ function BreathTab(props: BreathTabProps) {
   return (
     <div className="page-grid">
       <Card className="card-tight">
-        <div className="chip-row is-single-line chip-row-breath-mode" role="group" aria-label="Breath mode">
+        <div className="chip-row is-single-line chip-row-breath-mode" role="group" aria-label="呼吸模式">
           {(Object.entries(BREATH_MODE_LABELS) as [BreathMode, string][]).map(([mode, label]) => (
             <button
               key={mode}
@@ -589,10 +570,10 @@ function BreathTab(props: BreathTabProps) {
         {props.selectedMode === 'custom' && (
           <div className="custom-grid">
             {([
-              ['inhale', 'Inhale'],
-              ['hold', 'Hold'],
-              ['exhale', 'Exhale'],
-              ['endHold', 'End hold'],
+              ['inhale', '吸气'],
+              ['hold', '屏息'],
+              ['exhale', '呼气'],
+              ['endHold', '末段屏息'],
             ] as [BreathPhase, string][]).map(([phase, label]) => (
               <label key={phase} className="field-card">
                 <span>{label}</span>
@@ -613,24 +594,24 @@ function BreathTab(props: BreathTabProps) {
 
         <div className="status-panel status-panel-tight">
           <div>
-            <span className="status-label">Phase</span>
+            <span className="status-label">阶段</span>
             <strong>{BREATH_PHASE_LABELS[props.currentPhase]}</strong>
           </div>
           <div>
-            <span className="status-label">Countdown</span>
+            <span className="status-label">倒计时</span>
             <strong>{props.phaseRemainingSeconds}s</strong>
           </div>
           <div>
-            <span className="status-label">Round</span>
+            <span className="status-label">轮次</span>
             <strong>
               {props.status === 'completed'
-                ? `${props.completedRounds} of ${props.selectedRounds}`
-                : `${Math.min(props.currentRound, props.selectedRounds)} of ${props.selectedRounds}`}
+                ? `${props.completedRounds} / ${props.selectedRounds}`
+                : `${Math.min(props.currentRound, props.selectedRounds)} / ${props.selectedRounds}`}
             </strong>
           </div>
         </div>
 
-        <div className="chip-row is-single-line chip-row-compact" role="group" aria-label="Breath rounds">
+        <div className="chip-row is-single-line chip-row-compact" role="group" aria-label="呼吸轮数">
           {Array.from(BREATH_ROUND_OPTIONS).map((rounds) => (
             <button
               key={rounds}
@@ -639,12 +620,12 @@ function BreathTab(props: BreathTabProps) {
               onClick={() => props.onSelectRounds(rounds)}
               disabled={props.status === 'running' || props.status === 'paused'}
             >
-              {rounds} rds
+              {rounds} 轮
             </button>
           ))}
         </div>
 
-        <ToggleRow label="Cue sounds" isEnabled={props.isSoundEnabled} onToggle={props.onSoundToggle} />
+        <ToggleRow label="声音提示" isEnabled={props.isSoundEnabled} onToggle={props.onSoundToggle} />
 
         <div className="action-row">
           <button className="primary-button" type="button" onClick={props.onToggleStartPause}>
@@ -656,22 +637,22 @@ function BreathTab(props: BreathTabProps) {
             onClick={props.onEnd}
             disabled={props.status === 'idle'}
           >
-            End
+            结束
           </button>
         </div>
       </Card>
 
       <Card className="card-compact">
-        <SectionHeader title="Today activity" />
+        <SectionHeader title="今日记录" />
         {props.entriesToday.length === 0 ? (
-          <EmptyState text="No breath sessions yet today." />
+          <EmptyState text="今天还没有呼吸记录。" />
         ) : (
           <div className="event-stream">
             {props.entriesToday.map((entry) => (
               <div key={entry.id} className="event-row">
                 <span className="event-time">{formatClockTime(entry.startAt)}</span>
-                <span className="event-title">Breath</span>
-                <span className="event-summary">{entry.completedRounds} rds</span>
+                <span className="event-title">呼吸</span>
+                <span className="event-summary">{entry.completedRounds} 轮</span>
               </div>
             ))}
           </div>
@@ -681,139 +662,77 @@ function BreathTab(props: BreathTabProps) {
   )
 }
 
-interface TodayTabProps {
+interface TodayTabProps extends Omit<TodaySummaryCompactProps, 'movementTotalMinutes'> {
   currentDayLabel: string
-  rhythmTotalMinutes: number
-  breathSessions: number
-  breathRounds: number
-  strengthSummary: string
-  habitCompletionCount: number
-  habits: (HabitDefinition & { completedAt: string | null; captureCount: number | null })[]
   timelineEvents: TodayTimelineEvent[]
-  onToggleHabit: (habitId: string) => void
-  foundation: FoundationTileItem[]
-  onToggleFoundation: (itemId: FoundationItemId) => void
-  dayKey: string
   movementSessions: MovementSession[]
-  movementDefaultsFor: (typeId: string) => MovementDefaults
-  onAddMovement: (draft: MovementSessionDraft) => void
-  onUpdateMovement: MovementUpdateHandler
-  onDeleteMovement: MovementDeleteHandler
 }
-
 function TodayTab(props: TodayTabProps) {
-  const habitGroups = groupHabitsByCategory(props.habits)
-  const foundationCompletedCount = props.foundation.filter((item) => item.completedAt).length
-
-  return (
-    <div className="page-grid">
-      <Card className="card-compact">
-        <FoundationHeader completedCount={foundationCompletedCount} />
-        <div className="foundation-grid">
-          {props.foundation.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`foundation-tile${item.completedAt ? ' is-complete' : ''}`}
-              aria-pressed={Boolean(item.completedAt)}
-              onClick={() => props.onToggleFoundation(item.id)}
-            >
-              <strong>{item.label}</strong>
-              <span>{item.completedAt ? `✓ ${formatClockTime(item.completedAt)}` : '点按完成'}</span>
-            </button>
-          ))}
+  return <div className="page-grid">
+    <Card className="card-compact"><SectionHeader title="今日概览" subtitle={props.currentDayLabel} />
+      <TodaySummaryCompact {...props} movementTotalMinutes={props.movementSessions.reduce((total, session) => total + session.durationMinutes, 0)} />
+    </Card>
+    <Card className="card-compact"><SectionHeader title="今日时间线" />
+      {props.timelineEvents.length === 0 ? <EmptyState text="今天还没有记录。" /> : <div className="event-stream">
+        {props.timelineEvents.map((event) => <details key={event.id} className="event-row">
+          <summary className="event-row-summary"><span className="event-time">{formatClockTime(event.timestamp)}</span><span className="event-title">{event.title}</span><span className="event-summary">{event.summary}</span></summary>
+          {event.detail && <p className="event-detail">{event.detail}</p>}
+        </details>)}
+      </div>}
+    </Card>
+  </div>
+}
+interface HabitTabProps {
+  habits: HabitDefinition[]
+  allHabits: HabitDefinition[]
+  today: import('./lib/domain').TodayState
+  onToggle: (id: string) => void
+  onAddMovement: (draft: MovementSessionDraft) => void
+  onSave: (habit: HabitDefinition) => void
+  onMove: (id: string, direction: 'up' | 'down') => void
+  onManage: () => void
+  defaultsFor: (id: string) => MovementDefaults
+}
+function HabitTab(props: HabitTabProps) {
+  const [organizing, setOrganizing] = useState(false)
+  const [durationId, setDurationId] = useState<string | null>(null)
+  const [minutes, setMinutes] = useState('30')
+  const habits = organizing ? props.allHabits : props.habits
+  const duration = parseMovementMinutes(minutes)
+  return <div className="page-grid">
+    <div className="compact-toolbar"><button type="button" className="secondary-button" onClick={() => setOrganizing(!organizing)}>{organizing ? '完成排序' : '排序与显示'}</button><button type="button" className="secondary-button" onClick={props.onManage}>新增 / 编辑</button></div>
+    {HABIT_GROUPS.map((group) => <Card key={group} className="card-compact"><SectionHeader title={group} />
+      <div className="habit-log-list">{habits.filter((habit) => habitGroup(habit) === group).map((habit, index, items) => {
+        const mode = habitMode(habit)
+        const count = props.today.eventsByHabitId[habit.id]?.length ?? 0
+        const sessions = props.today.movementSessions.filter((session) => session.typeId === habit.id)
+        const completed = Boolean(props.today.completionTimesByHabitId[habit.id])
+        return <div key={habit.id} className="habit-log-item">
+          <button type="button" className={`habit-log-button${completed || count || sessions.length ? ' is-complete' : ''}`} disabled={organizing} aria-pressed={mode === 'single' ? completed : undefined}
+            onClick={() => { if (mode === 'duration') { setDurationId(durationId === habit.id ? null : habit.id); setMinutes(String(props.defaultsFor(habit.id).durationMinutes)) } else props.onToggle(habit.id) }}>
+            <strong>{habit.name}</strong><span>{mode === 'captures' ? `${count}次 · ＋` : mode === 'duration' ? `${sessions.reduce((sum, session) => sum + session.durationMinutes, 0)} 分钟 · ＋` : completed ? '✓ 已完成' : '点按完成'}</span>
+          </button>
+          {organizing && <div className="habit-order-controls">
+            <button type="button" aria-label={`${habit.name}上移`} disabled={index === 0} onClick={() => props.onMove(habit.id, 'up')}>↑</button>
+            <button type="button" aria-label={`${habit.name}下移`} disabled={index === items.length - 1} onClick={() => props.onMove(habit.id, 'down')}>↓</button>
+            <select aria-label={`${habit.name}分组`} value={habitGroup(habit)} onChange={(event) => props.onSave({ ...habit, group: event.target.value as HabitGroup })}>{HABIT_GROUPS.map((value) => <option key={value}>{value}</option>)}</select>
+            <button type="button" onClick={() => props.onSave({ ...habit, enabled: true, showOnToday: !(habit.enabled && habit.showOnToday) })}>{habit.enabled && habit.showOnToday ? '隐藏' : '显示'}</button>
+          </div>}
+          {mode === 'duration' && durationId === habit.id && <div className="duration-capture">
+            <div className="chip-row">{MOVEMENT_DURATION_PRESETS.map((value) => <button key={value} type="button" className={`chip${Number(minutes) === value ? ' is-active' : ''}`} onClick={() => setMinutes(String(value))}>{value}</button>)}</div>
+            <div className="compact-toolbar"><label>分钟 <input aria-label={`${habit.name}分钟`} type="number" inputMode="numeric" min="1" max={MOVEMENT_MAX_MINUTES} value={minutes} onChange={(event) => setMinutes(event.target.value)} /></label>
+              <button type="button" className="primary-button" disabled={duration === null} onClick={() => { if (duration !== null) { props.onAddMovement({ typeId: habit.id, durationMinutes: duration }); setDurationId(null) } }}>记录</button>
+            </div>
+          </div>}
         </div>
-      </Card>
-
-      <Card className="card-compact">
-        <SectionHeader title="运动记录" subtitle="选好项目，一键记录。" />
-        <MovementQuickLog defaultsFor={props.movementDefaultsFor} onAdd={props.onAddMovement} />
-        <div className="activity-log">
-          <div className="activity-log-label">今日运动</div>
-          <MovementSessionList
-            dayKey={props.dayKey}
-            sessions={props.movementSessions}
-            emptyText="今天还没有运动记录。"
-            onUpdate={props.onUpdateMovement}
-            onDelete={props.onDeleteMovement}
-          />
-        </div>
-      </Card>
-
-      <Card className="card-compact">
-        <SectionHeader title="Habit actions" />
-
-        {props.habits.length === 0 ? (
-          <EmptyState text="No habits are set to show on Today yet. Add or enable them in Library." />
-        ) : (
-          <div className="habit-group-stack">
-            {habitGroups.map(([category, habits]) => (
-              <section key={category} className="habit-group">
-                <div className="habit-group-label">{category}</div>
-                <div className="habit-chip-row">
-                  {habits.map((habit) => {
-                    const isMulti = habit.captureCount !== null
-                    const isDone = isMulti ? (habit.captureCount! > 0) : Boolean(habit.completedAt)
-                    return (
-                      <button
-                        key={habit.id}
-                        className={`habit-chip${isDone ? ' is-complete' : ''}`}
-                        type="button"
-                        onClick={() => props.onToggleHabit(habit.id)}
-                      >
-                        <span>{habit.name}{isMulti && habit.captureCount! > 0 ? ` · ${habit.captureCount}×` : ''}</span>
-                        {!isMulti && habit.completedAt && <small>{formatClockTime(habit.completedAt)}</small>}
-                      </button>
-                    )
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card className="card-compact">
-        <SectionHeader title="Day at a glance" subtitle={props.currentDayLabel} />
-        <TodaySummaryCompact
-          rhythmTotalMinutes={props.rhythmTotalMinutes}
-          breathSessions={props.breathSessions}
-          breathRounds={props.breathRounds}
-          strengthSummary={props.strengthSummary}
-          habitCompletionCount={props.habitCompletionCount}
-          habitCount={props.habits.length}
-          foundationCompletedCount={foundationCompletedCount}
-          movementTotalMinutes={props.movementSessions.reduce((total, session) => total + session.durationMinutes, 0)}
-        />
-      </Card>
-
-      <Card className="card-compact">
-        <SectionHeader title="Timeline" />
-
-        {props.timelineEvents.length === 0 ? (
-          <EmptyState text="No activity recorded yet today." />
-        ) : (
-          <div className="event-stream">
-            {props.timelineEvents.map((event) => (
-              <details key={event.id} className="event-row">
-                <summary className="event-row-summary">
-                  <span className="event-time">{formatClockTime(event.timestamp)}</span>
-                  <span className="event-title">{event.title}</span>
-                  <span className="event-summary">{event.summary}</span>
-                </summary>
-                {event.detail && (
-                  <p className="event-detail">{event.detail}</p>
-                )}
-              </details>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
-  )
+      })}</div>
+    </Card>)}
+  </div>
 }
 
 interface HistoryTabProps {
+  habits: HabitDefinition[]
+  exercises: ExerciseDefinition[]
   selectedDayKey: string
   maxDayKey: string
   dailySummary: HistoryDailySummary
@@ -874,6 +793,7 @@ function HistoryTab(props: HistoryTabProps) {
             key={props.selectedDayKey}
             dayKey={props.selectedDayKey}
             sessions={day.movementSessions}
+            labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
             emptyText="这一天没有运动记录。"
             onUpdate={props.onUpdateMovement}
             onDelete={props.onDeleteMovement}
@@ -883,24 +803,26 @@ function HistoryTab(props: HistoryTabProps) {
         <div className="activity-log">
           <div className="activity-log-label">节律与习惯</div>
           <div className="metric-list">
-            <HistoryMetric label="Rhythm total" value={`${day.rhythmTotalMinutes} min`} />
-            <HistoryMetric label="Rhythm entries" value={`${day.rhythmEntriesCount}`} />
+            <HistoryMetric label="节律时长" value={`${day.rhythmTotalMinutes} 分钟`} />
+            <HistoryMetric label="节律次数" value={`${day.rhythmEntriesCount}`} />
             <HistoryMetric
-              label="Breath"
-              value={`${day.breathSessionsCount} session${day.breathSessionsCount === 1 ? '' : 's'} · ${day.breathRoundsCount} rounds`}
+              label="呼吸"
+              value={`${day.breathSessionsCount} 次 · ${day.breathRoundsCount} 轮`}
             />
-            <HistoryMetric label="Strength" value={day.strengthSummary} />
+            <HistoryMetric label="力量" value={day.strengthSummary} />
+            {day.strengthExerciseIds.map((id) => <HistoryMetric key={id} label={props.exercises.find((exercise) => exercise.id === id)?.name ?? id} value="✓" />)}
+            {day.habitRecords.filter((record) => !['mindfulEating', 'earlySleep'].includes(record.id)).map((record) => <HistoryMetric key={record.id} label={props.habits.find((habit) => habit.id === record.id)?.name ?? record.id} value={record.captures > 0 ? `${record.captures}次${record.completed ? ' · 已完成' : ''}` : '已完成'} />)}
             <HistoryMetric
-              label="Mindful eating"
+              label="正念饮食"
               value={
                 day.mindfulEatingCaptureCount > 0
-                  ? `Done · ${day.mindfulEatingCaptureCount}×`
+                  ? `已记录 · ${day.mindfulEatingCaptureCount}次`
                   : day.mindfulEatingCompleted
-                    ? 'Done'
-                    : 'Not done'
+                    ? '已完成'
+                    : '未完成'
               }
             />
-            <HistoryMetric label="Early sleep" value={day.earlySleepCompleted ? 'Done' : 'Not done'} />
+            <HistoryMetric label="早睡" value={day.earlySleepCompleted ? '已完成' : '未完成'} />
           </div>
         </div>
       </Card>
@@ -909,6 +831,7 @@ function HistoryTab(props: HistoryTabProps) {
         <PeriodSummaryCard
           kind="week"
           summary={props.weekSummary}
+          labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
           navigation={props.navigation.week}
           onStep={(delta) => props.onStepPeriod('week', delta)}
           onReset={() => props.onResetPeriod('week')}
@@ -916,6 +839,7 @@ function HistoryTab(props: HistoryTabProps) {
         <PeriodSummaryCard
           kind="month"
           summary={props.monthSummary}
+          labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
           navigation={props.navigation.month}
           onStep={(delta) => props.onStepPeriod('month', delta)}
           onReset={() => props.onResetPeriod('month')}
@@ -964,7 +888,6 @@ function PeriodNav({
 
 // ─── Daily foundation & movement ────────────────────────────────────────────
 
-type FoundationTileItem = { id: FoundationItemId; label: string; completedAt: string | null }
 type MovementUpdateHandler = (dayKey: string, sessionId: string, draft: MovementSessionDraft) => void
 type MovementDeleteHandler = (dayKey: string, sessionId: string) => void
 
@@ -983,83 +906,12 @@ function formatDayKeyLabel(dayKey: string) {
   return Number.isNaN(date.getTime()) ? undefined : formatFullDate(date)
 }
 
-function FoundationHeader({ completedCount }: { completedCount: number }) {
-  const total = FOUNDATION_ITEMS.length
-  return (
-    <div className="foundation-header">
-      <div className="section-header">
-        <h2>每日基础</h2>
-        <p>{completedCount === total ? '今日四项已全部完成' : '核心与脊柱的日常基础练习'}</p>
-      </div>
-      <div className="foundation-count" aria-label={`今日已完成 ${completedCount}/${total}`}>
-        <strong>
-          {completedCount}/{total}
-        </strong>
-        <div className="foundation-meter" aria-hidden="true">
-          {FOUNDATION_ITEMS.map((item, index) => (
-            <span key={item.id} className={index < completedCount ? 'is-on' : ''} />
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function toMovementDraft(value: MovementFormValue): MovementSessionDraft | null {
   const durationMinutes = parseMovementMinutes(value.durationText)
   if (durationMinutes === null) {
     return null
   }
   return { typeId: value.typeId, durationMinutes, intensity: value.intensity, note: value.note }
-}
-
-function MovementQuickLog({
-  defaultsFor,
-  onAdd,
-}: {
-  defaultsFor: (typeId: string) => MovementDefaults
-  onAdd: (draft: MovementSessionDraft) => void
-}) {
-  const [value, setValue] = useState<MovementFormValue>(() => {
-    const typeId = MOVEMENT_TYPES[0].id
-    const defaults = defaultsFor(typeId)
-    return { typeId, durationText: String(defaults.durationMinutes), intensity: defaults.intensity, note: '' }
-  })
-  const draft = toMovementDraft(value)
-
-  return (
-    <div className="movement-form">
-      <MovementFields
-        value={value}
-        onChange={(update) => {
-          if (update.typeId && update.typeId !== value.typeId) {
-            // Switching type pre-fills what was last logged for it.
-            const defaults = defaultsFor(update.typeId)
-            setValue({
-              ...value,
-              typeId: update.typeId,
-              durationText: String(defaults.durationMinutes),
-              intensity: defaults.intensity,
-            })
-            return
-          }
-          setValue({ ...value, ...update })
-        }}
-      />
-      <button
-        className="primary-button"
-        type="button"
-        disabled={!draft}
-        onClick={() => {
-          if (!draft) return
-          onAdd(draft)
-          setValue({ ...value, note: '' })
-        }}
-      >
-        {draft ? `记录 ${movementTypeLabel(value.typeId)} · ${draft.durationMinutes} 分钟` : '记录'}
-      </button>
-    </div>
-  )
 }
 
 function MovementFields({
@@ -1153,12 +1005,14 @@ function MovementFields({
 function MovementSessionList({
   dayKey,
   sessions,
+  labels = {},
   emptyText,
   onUpdate,
   onDelete,
 }: {
   dayKey: string
   sessions: MovementSession[]
+  labels?: Record<string, string>
   emptyText: string
   onUpdate: MovementUpdateHandler
   onDelete: MovementDeleteHandler
@@ -1173,6 +1027,7 @@ function MovementSessionList({
         <MovementSessionRow
           key={session.id}
           session={session}
+          label={labels[session.typeId]}
           onUpdate={(draft) => onUpdate(dayKey, session.id, draft)}
           onDelete={() => onDelete(dayKey, session.id)}
         />
@@ -1183,10 +1038,12 @@ function MovementSessionList({
 
 function MovementSessionRow({
   session,
+  label,
   onUpdate,
   onDelete,
 }: {
   session: MovementSession
+  label?: string
   onUpdate: (draft: MovementSessionDraft) => void
   onDelete: () => void
 }) {
@@ -1233,7 +1090,7 @@ function MovementSessionRow({
     <div className="movement-row">
       <div className="movement-row-main">
         <span className="event-time">{formatClockTime(session.loggedAt)}</span>
-        <span className="event-title">{movementTypeLabel(session.typeId)}</span>
+        <span className="event-title">{label ?? movementTypeLabel(session.typeId)}</span>
         <span className="event-summary">{meta}</span>
         {session.note && <p className="movement-note">{session.note}</p>}
       </div>
@@ -1291,12 +1148,14 @@ function periodSubtitle(kind: 'week' | 'month', summary: HistorySummary, navigat
 function PeriodSummaryCard({
   kind,
   summary,
+  labels = {},
   navigation,
   onStep,
   onReset,
 }: {
   kind: 'week' | 'month'
   summary: HistorySummary
+  labels?: Record<string, string>
   navigation: HistoryPeriodNavigation
   onStep: (delta: -1 | 1) => void
   onReset: () => void
@@ -1370,7 +1229,7 @@ function PeriodSummaryCard({
               key={type.typeId}
               // Type names are shown as written (Zumba, not ZUMBA).
               keepCase
-              label={movementTypeLabel(type.typeId)}
+              label={labels[type.typeId] ?? movementTypeLabel(type.typeId)}
               value={type.sessionsCount > 0 ? `${type.sessionsCount} 次 · ${type.totalMinutes} 分钟` : '—'}
             />
           ))}
@@ -1380,11 +1239,15 @@ function PeriodSummaryCard({
       <div className="activity-log">
         <div className="activity-log-label">节律与习惯</div>
         <div className="metric-list">
-          <HistoryMetric label="Rhythm total" value={`${summary.totalRhythmMinutes} min`} />
-          <HistoryMetric label="Days with rhythm" value={`${summary.rhythmDaysCount}`} />
-          <HistoryMetric label="Days with strength" value={`${summary.strengthDaysCount}`} />
-          <HistoryMetric label="Mindful eating days" value={`${summary.mindfulEatingDaysCount}`} />
-          <HistoryMetric label="Early sleep days" value={`${summary.earlySleepDaysCount}`} />
+          <HistoryMetric label="习惯完成" value={`${summary.habitCompletionsCount} 项次`} />
+          <HistoryMetric label="多次捕捉" value={`${summary.habitCapturesCount} 次`} />
+          <HistoryMetric label="完成动作" value={`${summary.strengthCompletionsCount} 项次`} />
+          <HistoryMetric label="呼吸记录" value={`${summary.breathSessionsCount} 次`} />
+          <HistoryMetric label="节律时长" value={`${summary.totalRhythmMinutes} 分钟`} />
+          <HistoryMetric label="节律天数" value={`${summary.rhythmDaysCount}`} />
+          <HistoryMetric label="力量天数" value={`${summary.strengthDaysCount}`} />
+          <HistoryMetric label="正念饮食天数" value={`${summary.mindfulEatingDaysCount}`} />
+          <HistoryMetric label="早睡天数" value={`${summary.earlySleepDaysCount}`} />
         </div>
       </div>
     </Card>
@@ -1395,61 +1258,41 @@ interface StrengthTabProps {
   routines: ResolvedStrengthRoutine[]
   selectedRoutineId: string
   completedExerciseIds: Set<string>
-  onSelectRoutine: (routineId: string) => void
-  onToggleExercise: (exerciseId: string) => void
+  exercises: ExerciseDefinition[]
+  onSelectRoutine: (id: string) => void
+  onToggleExercise: (id: string) => void
+  onManage: () => void
+  onEditExercise: (exercise: ExerciseDefinition) => void
 }
-
 function StrengthTab(props: StrengthTabProps) {
-  const selectedRoutine =
-    props.routines.find((routine) => routine.id === props.selectedRoutineId) ?? props.routines[0]
-
-  return (
-    <div className="page-grid">
-      <Card className="card-compact">
-        <SectionHeader title="Routine" />
-
-        <div className="chip-row" role="group" aria-label="Strength routine">
-          {props.routines.map((routine) => (
-            <button
-              key={routine.id}
-              type="button"
-              className={`chip${props.selectedRoutineId === routine.id ? ' is-active' : ''}`}
-              onClick={() => props.onSelectRoutine(routine.id)}
-            >
-              {routine.name}
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      <Card className="card-tight">
-        <SectionHeader
-          title={selectedRoutine.name}
-          subtitle={`${selectedRoutine.exercises.filter((e) => props.completedExerciseIds.has(e.id)).length}/${selectedRoutine.exercises.length} done`}
-        />
-
-        <div className="exercise-grid">
-          {selectedRoutine.exercises.map((exercise) => {
-            const isDone = props.completedExerciseIds.has(exercise.id)
-            return (
-              <button
-                key={exercise.id}
-                type="button"
-                className={`exercise-tile${isDone ? ' is-complete' : ''}`}
-                onClick={() => props.onToggleExercise(exercise.id)}
-              >
-                <strong>{exercise.name}</strong>
-                <span>{compactExerciseSummary(exercise)}</span>
-                {exercise.caution && (
-                  <small>{exercise.caution}</small>
-                )}
-              </button>
-            )
-          })}
-        </div>
-      </Card>
-    </div>
-  )
+  const [temporaryIds, setTemporaryIds] = useState<string[]>([])
+  const [adding, setAdding] = useState(false)
+  const selected = props.routines.find((routine) => routine.id === props.selectedRoutineId) ?? props.routines[0]
+  const core = coreExercises(props.exercises)
+  const temporary = props.exercises.filter((exercise) => temporaryIds.includes(exercise.id) && !selected?.exercises.some((item) => item.id === exercise.id))
+  const routineExercises = Array.from(new Map([...(selected?.exercises ?? []), ...temporary].map((exercise) => [exercise.id, exercise])).values())
+  const tiles = (exercises: (ExerciseDefinition | import('./lib/domain').ResolvedRoutineExercise)[]) => <div className="exercise-grid">
+    {exercises.map((exercise) => <div key={exercise.id} className="strength-item">
+      <button type="button" className={`exercise-tile${props.completedExerciseIds.has(exercise.id) ? ' is-complete' : ''}`} disabled={!exercise.enabled}
+        aria-pressed={props.completedExerciseIds.has(exercise.id)} onClick={() => props.onToggleExercise(exercise.id)}>
+        <strong>{props.completedExerciseIds.has(exercise.id) ? '✓ ' : ''}{exercise.name}</strong>
+        <span>{exercisePrescription(exercise) || (props.completedExerciseIds.has(exercise.id) ? '点按撤销' : '点按完成')}</span>
+      </button>
+      <details className="exercise-options"><summary>详情 / 编辑</summary><p>{exercise.description} {exercise.caution}</p><button type="button" className="secondary-button" onClick={() => { const definition = props.exercises.find((item) => item.id === exercise.id); if (definition) props.onEditExercise(definition) }}>编辑处方</button>
+        {temporaryIds.includes(exercise.id) && <button type="button" className="secondary-button" onClick={() => setTemporaryIds(temporaryIds.filter((id) => id !== exercise.id))}>移出临时列表</button>}
+      </details>
+    </div>)}
+  </div>
+  return <div className="page-grid">
+    <Card className="card-compact"><SectionHeader title="每日核心训练" subtitle={`${core.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length}/${core.length} 项`} />{core.length ? tiles(core) : <EmptyState text="在管理中选择核心动作。" />}</Card>
+    <Card className="card-compact"><div className="compact-toolbar"><h2>训练组合</h2><button type="button" className="secondary-button" onClick={props.onManage}>管理组合</button></div>
+      <div className="chip-row">{props.routines.map((routine) => <button key={routine.id} type="button" className={`chip${selected?.id === routine.id ? ' is-active' : ''}`} onClick={() => { props.onSelectRoutine(routine.id); setTemporaryIds([]) }}>{routine.name}</button>)}</div>
+      {selected && <p className="activity-log-label">{routineExercises.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length}/{routineExercises.length} 项</p>}
+      {tiles(routineExercises)}
+      <button type="button" className="secondary-button temporary-add" onClick={() => setAdding(!adding)}>＋ 临时加练</button>
+      {adding && <select aria-label="临时加练动作" value="" onChange={(event) => { if (event.target.value) { setTemporaryIds([...temporaryIds, event.target.value]); setAdding(false) } }}><option value="">选择动作</option>{props.exercises.filter((exercise) => exercise.enabled && !routineExercises.some((item) => item.id === exercise.id)).map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.trying ? ' · 尝试中' : ''}</option>)}</select>}
+    </Card>
+  </div>
 }
 
 interface LibraryTabProps {
@@ -1492,29 +1335,29 @@ function LibraryTab(props: LibraryTabProps) {
   return (
     <div className="page-grid">
       <Card className="card-compact">
-        <SectionHeader title="Library" />
+        <SectionHeader title="管理" />
 
-        <div className="chip-row" role="group" aria-label="Library section">
+        <div className="chip-row" role="group" aria-label="管理分类">
           <button
             type="button"
             className={`chip${props.section === 'habits' ? ' is-active' : ''}`}
             onClick={() => props.onSelectSection('habits')}
           >
-            Habits
+            习惯与活动
           </button>
           <button
             type="button"
             className={`chip${props.section === 'exercises' ? ' is-active' : ''}`}
             onClick={() => props.onSelectSection('exercises')}
           >
-            Exercises
+            动作
           </button>
           <button
             type="button"
             className={`chip${props.section === 'routines' ? ' is-active' : ''}`}
             onClick={() => props.onSelectSection('routines')}
           >
-            Routines
+            训练组合
           </button>
           <button
             type="button"
@@ -1530,15 +1373,87 @@ function LibraryTab(props: LibraryTabProps) {
         props.dataPanel
       ) : props.section === 'habits' ? (
         <>
+          {props.habitDraft && <Card className="library-editor">
+            <SectionHeader
+              title={props.habitDraft?.id ? '编辑习惯 / 活动' : '新增习惯 / 活动'}
+              subtitle=""
+            />
+
+            {props.habitDraft ? (
+              <>
+                <div className="form-grid">
+                  <label className="field-card">
+                    <span>名称</span>
+                    <input
+                      type="text"
+                      value={props.habitDraft.name}
+                      onChange={(event) => props.onHabitDraftChange({ name: event.target.value })}
+                    />
+                  </label>
+                  <label className="field-card">
+                    <span>分类</span>
+                    <input
+                      type="text"
+                      value={props.habitDraft.category}
+                      onChange={(event) =>
+                        props.onHabitDraftChange({ category: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card"><span>分组</span><select aria-label="分组" value={props.habitDraft.group ?? '每日习惯'} onChange={(e) => props.onHabitDraftChange({ group: e.target.value as HabitGroup })}>{HABIT_GROUPS.map((group) => <option key={group}>{group}</option>)}</select></label>
+                  <label className="field-card"><span>记录方式</span><select aria-label="记录方式" value={props.habitDraft.recordingMode ?? 'single'} onChange={(e) => props.onHabitDraftChange({ recordingMode: e.target.value as RecordingMode })}>{Object.entries(MODE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                  <label className="field-card"><span>频率</span><select aria-label="频率" value={props.habitDraft.frequency ?? 'daily'} onChange={(e) => props.onHabitDraftChange({ frequency: e.target.value as HabitFrequency })}>{Object.entries(FREQUENCY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                  <label className="field-card field-card-wide">
+                    <span>备注</span>
+                    <textarea
+                      rows={2}
+                      value={props.habitDraft.note}
+                      onChange={(event) => props.onHabitDraftChange({ note: event.target.value })}
+                    />
+                  </label>
+                </div>
+
+                <div className="inline-toggle-grid">
+                  <ToggleRow
+                    label="启用"
+                    isEnabled={props.habitDraft.enabled}
+                    onToggle={(value) => props.onHabitDraftChange({ enabled: value })}
+                  />
+                  <ToggleRow
+                    label="显示在习惯页"
+                    isEnabled={props.habitDraft.showOnToday}
+                    onToggle={(value) => props.onHabitDraftChange({ showOnToday: value })}
+                  />
+                </div>
+
+                <div className="action-row">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={props.onSaveHabit}
+                    disabled={!props.habitDraft.name.trim()}
+                  >
+                    保存
+                  </button>
+                  <button className="secondary-button" type="button" onClick={props.onCancelHabit}>
+                    取消
+                  </button>
+                </div>
+              </>
+            ) : (
+              <EmptyState text="选择项目编辑，或新增项目。" />
+            )}
+          </Card>}
+
           <Card>
             <SectionHeader
-              title="Habit library"
-              subtitle="Choose what is active and what appears on Today."
+              title="习惯与活动"
+              subtitle="管理名称、分组与记录方式。"
             />
 
             <div className="library-toolbar">
               <button className="primary-button" type="button" onClick={props.onAddHabit}>
-                Add habit
+                新增习惯 / 活动
               </button>
             </div>
 
@@ -1552,14 +1467,14 @@ function LibraryTab(props: LibraryTabProps) {
                 >
                   <div>
                     <strong>{habit.name}</strong>
-                    <p>{habit.note || 'No note yet.'}</p>
+                    <p>{`${habitGroup(habit)} · ${MODE_LABELS[habitMode(habit)]} · ${FREQUENCY_LABELS[habit.frequency ?? 'daily']}`}</p>
                   </div>
                   <div className="badge-row">
                     <span className={`badge${habit.enabled ? ' is-on' : ''}`}>
-                      {habit.enabled ? 'Enabled' : 'Disabled'}
+                      {habit.enabled ? '启用' : '停用'}
                     </span>
                     <span className={`badge${habit.showOnToday ? ' is-on' : ''}`}>
-                      {habit.showOnToday ? 'On Today' : 'Hidden from Today'}
+                      {habit.showOnToday ? '显示' : '隐藏'}
                     </span>
                   </div>
                 </button>
@@ -1567,74 +1482,7 @@ function LibraryTab(props: LibraryTabProps) {
             </div>
           </Card>
 
-          <Card>
-            <SectionHeader
-              title={props.habitDraft?.id ? 'Edit habit' : 'New habit'}
-              subtitle="Keep it simple."
-            />
 
-            {props.habitDraft ? (
-              <>
-                <div className="form-grid">
-                  <label className="field-card">
-                    <span>Name</span>
-                    <input
-                      type="text"
-                      value={props.habitDraft.name}
-                      onChange={(event) => props.onHabitDraftChange({ name: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-card">
-                    <span>Category</span>
-                    <input
-                      type="text"
-                      value={props.habitDraft.category}
-                      onChange={(event) =>
-                        props.onHabitDraftChange({ category: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card field-card-wide">
-                    <span>Short note</span>
-                    <textarea
-                      rows={3}
-                      value={props.habitDraft.note}
-                      onChange={(event) => props.onHabitDraftChange({ note: event.target.value })}
-                    />
-                  </label>
-                </div>
-
-                <div className="inline-toggle-grid">
-                  <ToggleRow
-                    label="Enabled"
-                    isEnabled={props.habitDraft.enabled}
-                    onToggle={(value) => props.onHabitDraftChange({ enabled: value })}
-                  />
-                  <ToggleRow
-                    label="Show on Today"
-                    isEnabled={props.habitDraft.showOnToday}
-                    onToggle={(value) => props.onHabitDraftChange({ showOnToday: value })}
-                  />
-                </div>
-
-                <div className="action-row">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={props.onSaveHabit}
-                    disabled={!props.habitDraft.name.trim()}
-                  >
-                    Save habit
-                  </button>
-                  <button className="secondary-button" type="button" onClick={props.onCancelHabit}>
-                    Cancel
-                  </button>
-                </div>
-              </>
-            ) : (
-              <EmptyState text="Select a habit to edit, or add a new one." />
-            )}
-          </Card>
         </>
       ) : props.section === 'routines' ? (
         <RoutinesSection
@@ -1654,15 +1502,135 @@ function LibraryTab(props: LibraryTabProps) {
         />
       ) : (
         <>
+          {props.exerciseDraft && <Card className="library-editor">
+            <SectionHeader
+              title={props.exerciseDraft?.id ? '编辑动作' : '新增动作'}
+              subtitle=""
+            />
+
+            {props.exerciseDraft ? (
+              <>
+                <div className="form-grid">
+                  <label className="field-card">
+                    <span>名称</span>
+                    <input
+                      type="text"
+                      value={props.exerciseDraft.name}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ name: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card">
+                    <span>分类</span>
+                    <input
+                      type="text"
+                      value={props.exerciseDraft.category}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ category: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card">
+                    <span>次数 / 持续时间</span>
+                    <input
+                      type="text"
+                      value={props.exerciseDraft.suggestedVolume}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ suggestedVolume: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card">
+                    <span>组数</span>
+                    <input
+                      type="text"
+                      value={props.exerciseDraft.suggestedSets}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ suggestedSets: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card">
+                    <span>预计用时</span>
+                    <input
+                      type="text"
+                      value={props.exerciseDraft.estimatedTime}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ estimatedTime: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card field-card-wide">
+                    <span>动作说明</span>
+                    <textarea
+                      rows={2}
+                      value={props.exerciseDraft.description}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ description: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field-card field-card-wide">
+                    <span>技巧 / 注意事项</span>
+                    <textarea
+                      rows={2}
+                      value={props.exerciseDraft.caution}
+                      onChange={(event) =>
+                        props.onExerciseDraftChange({ caution: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="inline-toggle-grid">
+                  <ToggleRow
+                    label="启用"
+                    isEnabled={props.exerciseDraft.enabled}
+                    onToggle={(value) => props.onExerciseDraftChange({ enabled: value })}
+                  />
+                </div>
+
+                <div className="inline-toggle-grid">
+                  <ToggleRow label="每日核心训练" isEnabled={Boolean(props.exerciseDraft.dailyCore)} onToggle={(dailyCore) => props.onExerciseDraftChange({ dailyCore })} />
+                  <ToggleRow label="尝试中" isEnabled={Boolean(props.exerciseDraft.trying)} onToggle={(trying) => props.onExerciseDraftChange({ trying })} />
+                </div>
+                <div className="routine-assignments"><span>所属训练组合</span>
+                  {props.routines.map((routine) => <label key={routine.id}><input type="checkbox" checked={props.exerciseDraft?.routineIds?.includes(routine.id) ?? false}
+                    onChange={(event) => { const ids = props.exerciseDraft?.routineIds ?? []; props.onExerciseDraftChange({ routineIds: event.target.checked ? [...ids, routine.id] : ids.filter((id) => id !== routine.id) }) }} />{routine.name}</label>)}
+                </div>
+                <div className="action-row">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={props.onSaveExercise}
+                    disabled={!props.exerciseDraft.name.trim()}
+                  >
+                    保存
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={props.onCancelExercise}
+                  >
+                    取消
+                  </button>
+                </div>
+              </>
+            ) : (
+              <EmptyState text="选择动作编辑，或新增动作。" />
+            )}
+          </Card>}
+
           <Card>
             <SectionHeader
-              title="Exercise library"
-              subtitle="A simple pool for current and future routines."
+              title="动作库"
+              subtitle="可加入核心训练或多个训练组合。"
             />
 
             <div className="library-toolbar">
               <button className="primary-button" type="button" onClick={props.onAddExercise}>
-                Add exercise
+                新增动作
               </button>
             </div>
 
@@ -1676,12 +1644,12 @@ function LibraryTab(props: LibraryTabProps) {
                 >
                   <div>
                     <strong>{exercise.name}</strong>
-                    <p>{exercise.caution || exercise.description || 'No note yet.'}</p>
+                    <p>{exercise.caution || exercise.description || ''}</p>
                   </div>
                   <div className="badge-row">
-                    <span className="badge">{exercise.category}</span>
+                    <span className="badge">{exercise.category}</span>{exercise.trying && <span className="badge">尝试中</span>}{exercise.dailyCore && <span className="badge">每日核心</span>}
                     <span className={`badge${exercise.enabled ? ' is-on' : ''}`}>
-                      {exercise.enabled ? 'Enabled' : 'Disabled'}
+                      {exercise.enabled ? '启用' : '停用'}
                     </span>
                   </div>
                 </button>
@@ -1689,117 +1657,7 @@ function LibraryTab(props: LibraryTabProps) {
             </div>
           </Card>
 
-          <Card>
-            <SectionHeader
-              title={props.exerciseDraft?.id ? 'Edit exercise' : 'New exercise'}
-              subtitle="Keep each item lightweight and practical."
-            />
 
-            {props.exerciseDraft ? (
-              <>
-                <div className="form-grid">
-                  <label className="field-card">
-                    <span>Name</span>
-                    <input
-                      type="text"
-                      value={props.exerciseDraft.name}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ name: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card">
-                    <span>Category</span>
-                    <input
-                      type="text"
-                      value={props.exerciseDraft.category}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ category: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card">
-                    <span>Suggested reps or duration</span>
-                    <input
-                      type="text"
-                      value={props.exerciseDraft.suggestedVolume}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ suggestedVolume: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card">
-                    <span>Suggested sets</span>
-                    <input
-                      type="text"
-                      value={props.exerciseDraft.suggestedSets}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ suggestedSets: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card">
-                    <span>Estimated time</span>
-                    <input
-                      type="text"
-                      value={props.exerciseDraft.estimatedTime}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ estimatedTime: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card field-card-wide">
-                    <span>Short description</span>
-                    <textarea
-                      rows={3}
-                      value={props.exerciseDraft.description}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ description: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field-card field-card-wide">
-                    <span>Caution / key form note</span>
-                    <textarea
-                      rows={3}
-                      value={props.exerciseDraft.caution}
-                      onChange={(event) =>
-                        props.onExerciseDraftChange({ caution: event.target.value })
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className="inline-toggle-grid">
-                  <ToggleRow
-                    label="Enabled"
-                    isEnabled={props.exerciseDraft.enabled}
-                    onToggle={(value) => props.onExerciseDraftChange({ enabled: value })}
-                  />
-                </div>
-
-                <div className="action-row">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={props.onSaveExercise}
-                    disabled={!props.exerciseDraft.name.trim()}
-                  >
-                    Save exercise
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={props.onCancelExercise}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            ) : (
-              <EmptyState text="Select an exercise to edit, or add a new one." />
-            )}
-          </Card>
         </>
       )}
     </div>
@@ -1835,7 +1693,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
 
   const [addExerciseId, setAddExerciseId] = useState('')
 
-  const availableExercises = props.exercises.filter((e) => e.enabled)
+  const availableExercises = props.exercises.filter((exercise) => exercise.enabled && !editingRoutine?.exercises.some((item) => item.exerciseId === exercise.id))
 
   function handleAddExercise(routineId: string) {
     const id = addExerciseId || availableExercises[0]?.id
@@ -1848,18 +1706,18 @@ function RoutinesSection(props: RoutinesSectionProps) {
     <>
       <Card>
         <SectionHeader
-          title="Routine library"
-          subtitle="Create and manage routines. Routines appear in the Strength tab."
+          title="训练组合"
+          subtitle=""
         />
 
         <div className="library-toolbar">
           <button className="primary-button" type="button" onClick={props.onAddRoutine}>
-            New routine
+            新增组合
           </button>
         </div>
 
         {props.routines.length === 0 ? (
-          <EmptyState text="No routines yet." />
+          <EmptyState text="还没有训练组合。" />
         ) : (
           <div className="library-list">
             {props.routines.map((routine) => (
@@ -1871,12 +1729,12 @@ function RoutinesSection(props: RoutinesSectionProps) {
               >
                 <div>
                   <strong>{routine.name}</strong>
-                  <p>{routine.exercises.length} exercise{routine.exercises.length === 1 ? '' : 's'}</p>
+                  <p>{routine.exercises.length} 个动作</p>
                 </div>
                 <div className="badge-row">
-                  {routine.isBuiltIn && <span className="badge">Built-in</span>}
+                  {routine.isBuiltIn && <span className="badge">内置</span>}
                   <span className={`badge${routine.enabled ? ' is-on' : ''}`}>
-                    {routine.enabled ? 'Enabled' : 'Disabled'}
+                    {routine.enabled ? '启用' : '停用'}
                   </span>
                 </div>
               </button>
@@ -1888,17 +1746,17 @@ function RoutinesSection(props: RoutinesSectionProps) {
       {props.routineDraft && (
         <Card>
           <SectionHeader
-            title={props.routineDraft.id ? 'Edit routine' : 'New routine'}
+            title={props.routineDraft.id ? '编辑组合' : '新增组合'}
           />
 
           <div className="form-grid">
             <label className="field-card field-card-wide">
-              <span>Routine name</span>
+              <span>组合名称</span>
               <input
                 type="text"
                 value={props.routineDraft.name}
-                placeholder="e.g. Morning mobility"
-                disabled={props.routineDraft.isBuiltIn}
+                placeholder="例如：晨间训练"
+
                 onChange={(e) => props.onRoutineDraftChange({ name: e.target.value })}
               />
             </label>
@@ -1906,7 +1764,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
 
           <div className="inline-toggle-grid" style={{ marginTop: 10 }}>
             <ToggleRow
-              label="Enabled"
+              label="启用"
               isEnabled={props.routineDraft.enabled}
               onToggle={(v) => props.onRoutineDraftChange({ enabled: v })}
             />
@@ -1919,10 +1777,10 @@ function RoutinesSection(props: RoutinesSectionProps) {
               onClick={props.onSaveRoutine}
               disabled={!props.routineDraft.name.trim()}
             >
-              Save routine
+              保存
             </button>
             <button className="secondary-button" type="button" onClick={props.onCancelRoutine}>
-              Cancel
+              取消
             </button>
           </div>
         </Card>
@@ -1932,11 +1790,11 @@ function RoutinesSection(props: RoutinesSectionProps) {
         <Card>
           <SectionHeader
             title={editingRoutine.name}
-            subtitle="Add and reorder exercises for this routine."
+            subtitle="调整动作顺序与处方。"
           />
 
           {editingRoutine.exercises.length === 0 ? (
-            <EmptyState text="No exercises yet. Add one below." />
+            <EmptyState text="在下方添加动作。" />
           ) : (
             <div className="routine-exercise-list">
               {editingRoutine.exercises.map((re, index) => {
@@ -1949,7 +1807,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
                         className="routine-move-btn"
                         onClick={() => props.onMoveRoutineExercise(editingRoutine.id, index, 'up')}
                         disabled={index === 0}
-                        aria-label="Move up"
+                        aria-label="上移"
                       >
                         ↑
                       </button>
@@ -1958,7 +1816,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
                         className="routine-move-btn"
                         onClick={() => props.onMoveRoutineExercise(editingRoutine.id, index, 'down')}
                         disabled={index === editingRoutine.exercises.length - 1}
-                        aria-label="Move down"
+                        aria-label="下移"
                       >
                         ↓
                       </button>
@@ -1969,10 +1827,10 @@ function RoutinesSection(props: RoutinesSectionProps) {
                       {def && <span className="routine-exercise-meta">{def.category}</span>}
 
                       <details className="routine-exercise-overrides">
-                        <summary>Override</summary>
+                        <summary>组合处方</summary>
                         <div className="routine-override-grid">
                           <label className="field-card">
-                            <span>Sets</span>
+                            <span>组数</span>
                             <input
                               type="text"
                               placeholder={def?.suggestedSets ?? ''}
@@ -1985,7 +1843,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
                             />
                           </label>
                           <label className="field-card">
-                            <span>Reps / volume</span>
+                            <span>次数 / 训练量</span>
                             <input
                               type="text"
                               placeholder={def?.suggestedVolume ?? ''}
@@ -1998,7 +1856,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
                             />
                           </label>
                           <label className="field-card">
-                            <span>Time</span>
+                            <span>时长</span>
                             <input
                               type="text"
                               placeholder={def?.estimatedTime ?? ''}
@@ -2018,7 +1876,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
                       type="button"
                       className="routine-remove-btn"
                       onClick={() => props.onRemoveRoutineExercise(editingRoutine.id, index)}
-                      aria-label="Remove exercise"
+                      aria-label="从组合移出"
                     >
                       ✕
                     </button>
@@ -2034,7 +1892,7 @@ function RoutinesSection(props: RoutinesSectionProps) {
                 className="routine-add-select"
                 value={addExerciseId}
                 onChange={(e) => setAddExerciseId(e.target.value)}
-                aria-label="Select exercise to add"
+                aria-label="选择加入组合的动作"
               >
                 {availableExercises.map((e) => (
                   <option key={e.id} value={e.id}>
@@ -2047,13 +1905,13 @@ function RoutinesSection(props: RoutinesSectionProps) {
                 className="secondary-button"
                 onClick={() => handleAddExercise(editingRoutine.id)}
               >
-                Add
+                添加
               </button>
             </div>
           )}
 
           {availableExercises.length === 0 && (
-            <EmptyState text="Enable exercises in the Exercises section to add them here." />
+            <EmptyState text="请先在动作库启用动作。" />
           )}
         </Card>
       )}
@@ -2114,95 +1972,57 @@ function HistoryMetric({ label, value, keepCase = false }: { label: string; valu
   )
 }
 
-function compactExerciseSummary(exercise: {
-  suggestedVolume: string
-  suggestedSets: string
-  estimatedTime: string
-}) {
-  return [exercise.suggestedVolume, exercise.suggestedSets, exercise.estimatedTime]
-    .filter(Boolean)
-    .join(' · ')
-}
-
-type TodayHabit = HabitDefinition & { completedAt: string | null; captureCount: number | null }
-
-function groupHabitsByCategory(habits: TodayHabit[]) {
-  const groups = new Map<string, TodayHabit[]>()
-  for (const habit of habits) {
-    const key = habit.category || 'General'
-    const items = groups.get(key) ?? []
-    items.push(habit)
-    groups.set(key, items)
-  }
-  return Array.from(groups.entries())
-}
-
 function rhythmPrimaryLabel(status: string) {
   switch (status) {
     case 'running':
-      return 'Pause'
+      return '暂停'
     case 'paused':
-      return 'Resume'
+      return '继续'
     default:
-      return 'Start'
+      return '开始'
   }
 }
 
 function rhythmStatusLabel(status: string) {
   switch (status) {
     case 'running':
-      return 'Running'
+      return '进行中'
     case 'paused':
-      return 'Paused'
+      return '已暂停'
     case 'completed':
-      return 'Saved'
+      return '已记录'
     default:
-      return 'Ready'
+      return '就绪'
   }
 }
 
 function breathPrimaryLabel(status: string) {
   switch (status) {
     case 'running':
-      return 'Pause'
+      return '暂停'
     case 'paused':
-      return 'Resume'
+      return '继续'
     default:
-      return 'Start'
+      return '开始'
   }
 }
 
 function tabTitle(tab: TabKey) {
   switch (tab) {
     case 'rhythm':
-      return 'Rhythm'
+      return '节律'
     case 'breath':
-      return 'Breath'
+      return '呼吸'
     case 'today':
-      return 'Today'
+      return '今日'
     case 'history':
-      return 'History'
+      return '历史'
     case 'strength':
-      return 'Strength'
+      return '力量'
+    case 'habit':
+      return '习惯'
     case 'library':
-      return 'Library'
-  }
-}
-
-function tabNote(tab: TabKey) {
-  switch (tab) {
-    case 'rhythm':
-      return 'Fixed 180 BPM with simple elapsed logging.'
-    case 'breath':
-      return 'Four calm phases with presets and one custom mode.'
-    case 'today':
-      return 'Today’s key actions and events.'
-    case 'history':
-      return 'Selected-day review plus quiet week and month summaries.'
-    case 'strength':
-      return 'Gentle routines with compact exercise cards.'
-    case 'library':
-      return 'Manage habits, exercises, and custom routines.'
+      return '管理'
   }
 }
 

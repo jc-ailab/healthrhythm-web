@@ -1,0 +1,342 @@
+{
+  "version": 3,
+  "currentDayKey": "2026-04-15",
+  "selectedTab": "rhythm",
+  "rhythm": {
+    "selectedDurationMinutes": 15,
+    "status": "idle",
+    "isSoundEnabled": true,
+    "entriesToday": [],
+    "sessionStartAt": null,
+    "activeStartAt": null,
+    "elapsedSecondsBeforeCurrentRun": 0
+  },
+  "breath": {
+    "selectedMode": "fourSevenEight",
+    "customPattern": {
+      "inhale": 4,
+      "hold": 4,
+      "exhale": 6,
+      "endHold": 0
+    },
+    "selectedRounds": 5,
+    "currentPhase": "inhale",
+    "phaseRemainingSeconds": 4,
+    "currentRound": 1,
+    "completedRounds": 0,
+    "status": "idle",
+    "isSoundEnabled": true,
+    "entriesToday": [],
+    "sessionStartAt": null,
+    "activeRunStartAt": null,
+    "phaseEndAt": null,
+    "elapsedSecondsBeforeCurrentRun": 0
+  },
+  "today": {
+    "completionTimesByHabitId": {
+      "earlySleep": "2026-04-14T23:00:00.000Z"
+    },
+    "eventsByHabitId": {
+      "mindfulEating": [
+        "2026-04-14T23:00:00.000Z"
+      ]
+    },
+    "foundationCompletedAt": {
+      "lowerAbs": "2026-04-14T23:00:00.000Z"
+    },
+    "movementSessions": [
+      {
+        "id": "v2-movement-existing",
+        "typeId": "jingang",
+        "durationMinutes": 25,
+        "loggedAt": "2026-04-14T23:00:00.000Z",
+        "note": "原有备注"
+      }
+    ]
+  },
+  "strength": {
+    "completedExerciseIds": [
+      "routine-a-glute-bridge"
+    ],
+    "lastUpdatedAt": "2026-04-14T23:00:00.000Z",
+    "routines": [
+      {
+        "id": "routine-a",
+        "name": "Routine A",
+        "enabled": true,
+        "isBuiltIn": true,
+        "exercises": [
+          {
+            "exerciseId": "routine-a-sit-to-stand"
+          },
+          {
+            "exerciseId": "routine-a-glute-bridge"
+          },
+          {
+            "exerciseId": "routine-a-chest-supported-row"
+          },
+          {
+            "exerciseId": "routine-a-wall-push-up"
+          },
+          {
+            "exerciseId": "routine-a-dead-bug"
+          }
+        ]
+      },
+      {
+        "id": "routine-b",
+        "name": "Routine B",
+        "enabled": true,
+        "isBuiltIn": true,
+        "exercises": [
+          {
+            "exerciseId": "routine-b-romanian-deadlift"
+          },
+          {
+            "exerciseId": "routine-b-side-lying-clam"
+          },
+          {
+            "exerciseId": "routine-b-floor-press"
+          },
+          {
+            "exerciseId": "routine-b-band-pull-apart"
+          },
+          {
+            "exerciseId": "routine-b-bird-dog"
+          }
+        ]
+      },
+      {
+        "id": "custom-routine-existing",
+        "name": "我的组合",
+        "enabled": true,
+        "exercises": [
+          {
+            "exerciseId": "custom-exercise-existing",
+            "customSets": "4 组"
+          }
+        ]
+      }
+    ]
+  },
+  "library": {
+    "habits": [
+      {
+        "id": "custom-habit-existing",
+        "name": "我的习惯",
+        "category": "自定义",
+        "note": "保留备注",
+        "enabled": true,
+        "showOnToday": true
+      },
+      {
+        "id": "mindfulEating",
+        "name": "Mindful eating",
+        "category": "Meal rhythm",
+        "note": "One calm, attentive meal.",
+        "enabled": true,
+        "showOnToday": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "earlySleep",
+        "name": "我的早睡",
+        "category": "Rest",
+        "note": "A steady wind-down and earlier bedtime.",
+        "enabled": true,
+        "showOnToday": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "foot-soak",
+        "name": "Foot soak",
+        "category": "Evening care",
+        "note": "A short warm soak to settle at the end of the day.",
+        "enabled": true,
+        "showOnToday": false,
+        "isBuiltIn": true
+      },
+      {
+        "id": "moxibustion",
+        "name": "Moxibustion",
+        "category": "Care",
+        "note": "Gentle self-care practice when it feels appropriate.",
+        "enabled": true,
+        "showOnToday": false,
+        "isBuiltIn": true
+      },
+      {
+        "id": "walking",
+        "name": "Walking",
+        "category": "Movement",
+        "note": "A light everyday walk outside or indoors.",
+        "enabled": true,
+        "showOnToday": false,
+        "isBuiltIn": true
+      },
+      {
+        "id": "ginger-drink",
+        "name": "Ginger drink",
+        "category": "Kitchen",
+        "note": "A simple warm drink when it suits the day.",
+        "enabled": true,
+        "showOnToday": false,
+        "isBuiltIn": true
+      }
+    ],
+    "exercises": [
+      {
+        "id": "routine-a-sit-to-stand",
+        "name": "Sit-to-stand from high chair",
+        "category": "Lower body",
+        "description": "A supported standing pattern from a higher seat.",
+        "caution": "Use a higher seat and keep the knees comfortable. Hold the chair if needed.",
+        "suggestedVolume": "我自己的次数",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "3 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-a-glute-bridge",
+        "name": "Glute bridge",
+        "category": "Lower body",
+        "description": "A gentle posterior-chain movement done on the floor.",
+        "caution": "Press through the feet and stop before any back strain.",
+        "suggestedVolume": "8 to 10 reps",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "3 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-a-chest-supported-row",
+        "name": "Chest-supported dumbbell row",
+        "category": "Upper body",
+        "description": "A pulling movement with chest support for steadiness.",
+        "caution": "Support the chest so the lower back stays quiet.",
+        "suggestedVolume": "8 reps",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "4 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-a-wall-push-up",
+        "name": "Wall push-up",
+        "category": "Upper body",
+        "description": "A gentle pressing pattern using the wall.",
+        "caution": "Keep the body long and choose a wall distance that feels steady.",
+        "suggestedVolume": "6 to 10 reps",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "3 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-a-dead-bug",
+        "name": "Dead bug",
+        "category": "Core",
+        "description": "A slow trunk-control pattern done with steady breathing.",
+        "caution": "Move slowly and keep the ribs down without breath-holding.",
+        "suggestedVolume": "5 reps each side",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "4 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-b-romanian-deadlift",
+        "name": "Dumbbell Romanian deadlift",
+        "category": "Lower body",
+        "description": "A hip-hinge pattern with a light dumbbell.",
+        "caution": "Soft knees, hinge at the hips, and keep the range modest.",
+        "suggestedVolume": "8 reps",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "4 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-b-side-lying-clam",
+        "name": "Side-lying clam",
+        "category": "Pelvic-floor-friendly",
+        "description": "A small side-lying hip exercise for controlled glute work.",
+        "caution": "Keep the pelvis still and avoid rolling backward.",
+        "suggestedVolume": "10 reps each side",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "4 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-b-floor-press",
+        "name": "Single-arm dumbbell floor press",
+        "category": "Upper body",
+        "description": "A light pressing movement from the floor.",
+        "caution": "Use a light weight and keep the shoulder comfortable.",
+        "suggestedVolume": "8 reps each side",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "4 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-b-band-pull-apart",
+        "name": "Band pull-apart",
+        "category": "Upper body",
+        "description": "A controlled upper-back movement with a light band.",
+        "caution": "Move with control and keep the shoulders down.",
+        "suggestedVolume": "8 to 10 reps",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "3 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "routine-b-bird-dog",
+        "name": "Bird-dog",
+        "category": "Core",
+        "description": "A slow contralateral reach for trunk steadiness.",
+        "caution": "Reach long rather than high and keep the trunk steady.",
+        "suggestedVolume": "5 reps each side",
+        "suggestedSets": "2 sets",
+        "estimatedTime": "4 min",
+        "enabled": true,
+        "isBuiltIn": true
+      },
+      {
+        "id": "custom-exercise-existing",
+        "name": "我的动作",
+        "category": "自定义",
+        "description": "保留说明",
+        "caution": "",
+        "suggestedSets": "3 组",
+        "suggestedVolume": "7 次",
+        "estimatedTime": "2 分钟",
+        "enabled": true
+      }
+    ]
+  },
+  "history": [
+    {
+      "dayKey": "2026-04-14",
+      "rhythmEntries": [],
+      "breathSessions": [],
+      "strengthCompletedExerciseIds": [],
+      "strengthLastUpdatedAt": null,
+      "habits": {},
+      "foundation": {
+        "pelvicFloor": "2026-04-13T23:00:00.000Z"
+      },
+      "movementSessions": [
+        {
+          "id": "v2-swimming-existing",
+          "typeId": "swimming",
+          "durationMinutes": 35,
+          "loggedAt": "2026-04-14T00:00:00.000Z"
+        }
+      ]
+    }
+  ]
+}

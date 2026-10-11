@@ -108,7 +108,7 @@ describe('loading saves written before foundation and movement existed', () => {
     const { state, notice } = loadPersistedState(at(10))
 
     expect(notice).toBeNull()
-    expect(state.version).toBe(3)
+    expect(state.version).toBe(4)
     expect(state.today.foundationCompletedAt).toEqual({})
     expect(state.today.movementSessions).toEqual([])
     expect(state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })
@@ -119,7 +119,7 @@ describe('loading saves written before foundation and movement existed', () => {
     expect(yesterday.habits).toEqual({ mindfulEating: at(12, 0, 14).toISOString() })
     expect(yesterday.foundation).toEqual({})
     expect(yesterday.movementSessions).toEqual([])
-    expect(storage.has(backupKeyFor(storage.get(key)!))).toBe(false)
+    expect(storage.get(backupKeyFor(storage.get(key)!))).toBe(storage.get(key))
   })
 
   it('renders history and weekly summaries for a migrated save without throwing', () => {
@@ -466,6 +466,7 @@ describe('weekly aggregation', () => {
       { typeId: 'zumba', sessionsCount: 1, totalMinutes: 45 },
       { typeId: 'yoga', sessionsCount: 1, totalMinutes: 20 },
       { typeId: 'jingang', sessionsCount: 0, totalMinutes: 0 },
+      { typeId: 'pilates', sessionsCount: 0, totalMinutes: 0 },
       { typeId: 'taichi', sessionsCount: 1, totalMinutes: 15 },
     ])
   })
@@ -636,7 +637,7 @@ describe('History period navigation and aggregation', () => {
       const summary = weekSummary('2026-04-06')
       expect(summary.movementSessionsCount).toBe(3)
       expect(summary.movementTotalMinutes).toBe(90)
-      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [0, 0], yoga: [1, 30], jingang: [1, 40] })
+      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [0, 0], yoga: [1, 30], jingang: [1, 40], pilates: [0, 0] })
     })
 
     it('counts only days so far in the current week', () => {
@@ -681,7 +682,7 @@ describe('History period navigation and aggregation', () => {
       expect(summary.foundationDaysById).toEqual({ lowerAbs: 2, lowerBack: 2, pelvicFloor: 2, spineMobility: 2 })
       expect(summary.movementSessionsCount).toBe(5)
       expect(summary.movementTotalMinutes).toBe(185)
-      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [2, 95], yoga: [1, 30], jingang: [1, 40] })
+      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [2, 95], yoga: [1, 30], jingang: [1, 40], pilates: [0, 0] })
     })
 
     it('aggregates a previous month over all its days', () => {
@@ -717,12 +718,12 @@ describe('History period navigation and aggregation', () => {
 })
 
 describe('Zumba label', () => {
-  it('shows existing zumba records as Zumba without changing the stored id', () => {
-    expect(movementTypeLabel('zumba')).toBe('Zumba')
+  it('shows existing zumba records as 尊巴舞 without changing the stored id', () => {
+    expect(movementTypeLabel('zumba')).toBe('尊巴舞')
 
     const state = addMovementSessionState(stateAt(at(10)), { typeId: 'zumba', durationMinutes: 45 }, at(10))
 
     expect(state.today.movementSessions[0].typeId).toBe('zumba')
-    expect(buildTodayTimeline(state, [], []).find((event) => event.kind === 'movement')!.title).toBe('Zumba')
+    expect(buildTodayTimeline(state, [], []).find((event) => event.kind === 'movement')!.title).toBe('尊巴舞')
   })
 })

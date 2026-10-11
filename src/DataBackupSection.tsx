@@ -24,6 +24,7 @@ type Message = { tone: 'ok' | 'error'; text: string }
 const REASON_LABELS: Record<BackupReason, string> = {
   unreadable: '读取出错时保存的原数据',
   'before-import': '导入前的自动备份',
+  'before-migration': '升级前备份',
   'before-restore': '恢复前的自动备份',
 }
 
@@ -54,7 +55,7 @@ export function DataBackupSection({
     (status) => status === 'running' || status === 'paused',
   )
   const blockedReason = !canPersist
-    ? '本次打开时，旧数据无法读取也无法备份。为免覆盖它，导入和恢复暂不可用。'
+    ? '存档未安全加载或备份，导入和恢复暂不可用。请检查存储空间与权限后刷新。'
     : isSessionActive
       ? '请先结束正在进行的节律或呼吸练习，再导入或恢复。'
       : null
@@ -214,11 +215,11 @@ export function DataBackupSection({
       <section className="card card-compact data-section">
         <div className="section-header">
           <h2>恢复备份</h2>
-          <p>HealthRhythm 在本机自动保存的安全副本：读取出错时、导入或恢复之前。</p>
+          <p>HealthRhythm 在本机自动保存的安全副本：读取出错时、升级、导入或恢复之前。</p>
         </div>
         <p className="data-current">
           共 {backups.length} 份 · 约 {formatBytes(totalBytes)}。导入/恢复前的备份只保留最近 {SAFETY_COPIES_KEPT}{' '}
-          份；读取出错时保存的原数据不会被自动删除。
+          份；读取出错时与升级前保存的原数据不会被自动删除。
         </p>
 
         {backups.length === 0 ? (

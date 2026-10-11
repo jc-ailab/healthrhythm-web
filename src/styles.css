@@ -1463,3 +1463,66 @@
   clip: rect(0 0 0 0);
   border: 0;
 }
+
+/* V3 compact logging and management; retain the existing palette. */
+.management-entry { border: 1px solid #c6d5cb; background: #f6faf7; border-radius: 12px; padding: 10px 14px; color: #294b36; min-height: 44px; }
+.compact-toolbar { display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.compact-toolbar h2 { font-size: 1.05rem; margin: 0; }
+.compact-toolbar label { display: flex; gap: 6px; align-items: center; }
+.compact-toolbar input { width: 80px; min-width: 0; padding: 8px; border: 1px solid #c6d5cb; border-radius: 10px; }
+.habit-log-list { display: grid; gap: 6px; }
+.habit-log-button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid #dce4de; background: #fafcf9; color: #24312a; border-radius: 12px; padding: 11px 12px; min-height: 48px; text-align: left; }
+.habit-log-button strong { min-width: 0; overflow-wrap: anywhere; }
+.habit-log-button span { white-space: nowrap; font-size: 0.82rem; color: #57725e; }
+.habit-log-button.is-complete { background: #eaf3e9; border-color: #a8c6b0; }
+.habit-order-controls { display: flex; gap: 5px; margin: 5px 0 10px; }
+.habit-order-controls button, .habit-order-controls select { min-height: 44px; border: 1px solid #ccd8ce; border-radius: 8px; background: #fff; padding: 6px 10px; color: #354c3d; }
+.habit-order-controls select { flex: 1; min-width: 0; }
+.duration-capture { padding: 8px 0; display: grid; gap: 8px; }
+.strength-item { min-width: 0; }
+.strength-item .exercise-tile { width: 100%; min-height: 80px; }
+.exercise-options { margin: 5px 0 8px; font-size: 0.82rem; color: #5c6c60; }
+.exercise-options summary { min-height: 30px; padding: 4px; cursor: pointer; }
+.routine-assignments { display: grid; gap: 8px; margin: 12px 0; }
+.routine-assignments label { display: flex; gap: 8px; align-items: center; min-height: 40px; }
+.temporary-add { margin-top: 12px; }
+.today-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.today-summary-item small { color: #657768; font-size: 0.75rem; }
+.event-row-summary { min-width: 0; }
+.event-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.event-summary { flex-shrink: 0; white-space: nowrap; }
+.card, .page-grid, .form-grid, .library-row, .routine-exercise-body { min-width: 0; }
+input, select, textarea { max-width: 100%; }
+.field-card input, .field-card select, .field-card textarea { min-width: 0; width: 100%; font-size: 16px; }
+.exercise-tile strong, .library-row strong { overflow-wrap: anywhere; }
+.tab-button { min-width: 0; min-height: 44px; }
+@media (max-width: 720px) {
+  .top-bar { padding-top: max(10px, env(safe-area-inset-top)); }
+  .top-bar h1 { font-size: 1.5rem; }
+  .eyebrow { margin: 0 0 3px; font-size: 0.7rem; }
+  .tab-bar { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .app-shell { padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 720px) {
+  .top-bar { flex-direction: row; align-items: center; }
+  .compact-toolbar { flex-wrap: nowrap; }
+  .compact-toolbar .secondary-button { width: auto; flex: 1; padding: 9px 10px; min-height: 44px; }
+  .compact-toolbar .primary-button { width: auto; }
+  .management-entry { flex: 0 0 auto; }
+  .event-row-summary { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 6px; }
+  .event-detail { padding-left: 60px; }
+  .routine-exercise-move button { min-height: 44px; min-width: 36px; }
+  .tab-bar { bottom: 4px; }
+}
+.library-editor { grid-row: 2; }
+.library-row { overflow-wrap: anywhere; }
+.storage-notice { overflow-wrap: anywhere; }
+/* Constrain native controls inside the narrow routine editor. */
+.field-card, .routine-override-grid { min-width: 0; }
+.routine-add-select { min-width: 0; width: 100%; }
+.routine-add-row .secondary-button { width: auto; }
+.routine-override-grid .field-card { padding: 8px; }
+.routine-assignments label, .section-header h2 { overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .routine-override-grid { grid-template-columns: minmax(0, 1fr); }
+}

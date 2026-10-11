@@ -167,9 +167,10 @@ describe('loadPersistedState', () => {
     const result = loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
-    expect(result.state.version).toBe(3)
+    expect(result.state.version).toBe(4)
     expect(result.state.library.habits.length).toBeGreaterThan(0)
-    expect(backupKeys()).toHaveLength(0)
+    expect(backupKeys()).toHaveLength(1)
+    expect(storage.data.get(backupKeys()[0])).toBe(JSON.stringify(saved))
   })
 
   it('falls back to the legacy v1 key when the current key is empty', () => {
@@ -181,7 +182,7 @@ describe('loadPersistedState', () => {
     const result = loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
-    expect(result.state.version).toBe(3)
+    expect(result.state.version).toBe(4)
   })
 
   describe.each([
@@ -205,7 +206,7 @@ describe('loadPersistedState', () => {
       const result = loadPersistedState(at(10))
 
       expect(result.notice).toBeNull()
-      expect(result.state.version).toBe(3)
+      expect(result.state.version).toBe(4)
       expect(result.state.today.eventsByHabitId).toEqual({})
       expect(result.state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })
     })
@@ -219,7 +220,7 @@ describe('loadPersistedState', () => {
     })
   })
 
-  it('starts fresh without a notice when storage cannot be read at all', () => {
+  it('blocks persistence when storage cannot be read at all', () => {
     vi.stubGlobal('localStorage', {
       getItem() {
         throw new Error('SecurityError')
@@ -228,8 +229,8 @@ describe('loadPersistedState', () => {
 
     const result = loadPersistedState(at(10))
 
-    expect(result.notice).toBeNull()
-    expect(result.canPersist).toBe(true)
+    expect(result.notice?.message).toContain('暂停写入')
+    expect(result.canPersist).toBe(false)
   })
 })
 

@@ -12,9 +12,9 @@ const BACKUP_INDEX_KEY = 'health-rhythm-web-meta-backups'
  * - unreadable: saved data that could not be loaded (possibly the only copy of it)
  * - before-import / before-restore: the live state, saved just before it was replaced
  */
-export type BackupReason = 'unreadable' | 'before-import' | 'before-restore'
+export type BackupReason = 'unreadable' | 'before-import' | 'before-restore' | 'before-migration'
 
-const BACKUP_REASONS: readonly BackupReason[] = ['unreadable', 'before-import', 'before-restore']
+const BACKUP_REASONS: readonly BackupReason[] = ['unreadable', 'before-import', 'before-restore', 'before-migration']
 /** Only these are ever pruned automatically. */
 const SAFETY_COPY_REASONS: ReadonlySet<BackupReason> = new Set(['before-import', 'before-restore'])
 

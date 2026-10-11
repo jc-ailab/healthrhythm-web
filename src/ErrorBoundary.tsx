@@ -27,12 +27,12 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
         <main className="page-shell">
           <section className="card">
             <div className="section-header">
-              <h2>Something went wrong</h2>
-              <p>Your saved data on this device has not been changed. Reloading usually fixes this.</p>
+              <h2>遇到显示问题</h2>
+              <p>请刷新重试，不要清除浏览器数据。</p>
             </div>
             <div className="action-row">
               <button className="primary-button" type="button" onClick={() => window.location.reload()}>
-                Reload
+                刷新
               </button>
             </div>
           </section>
