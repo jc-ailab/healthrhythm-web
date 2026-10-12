@@ -1,3 +1,6 @@
+import { dayAsState, eventTimeLabel } from './lib/v31'
+import { buildTodayTimeline } from './lib/state'
+import { ActivityTimeline, JournalComposer, DominoHabitPage, DominoManager, HistoryActivityPanel } from './V31Panels'
 import { useState, type ReactNode } from 'react'
 
 import './styles.css'
@@ -43,10 +46,9 @@ import {
   type HistoryDailySummary,
   type HistoryPeriodKind,
   type HistoryPeriodNavigation,
-  type MovementDefaults,
 } from './lib/state'
 
-type LibrarySection = 'habits' | 'exercises' | 'routines' | 'data'
+type LibrarySection = 'habits' | 'exercises' | 'routines' | 'data' | 'blocks'
 
 type RoutineDraft = {
   id?: string
@@ -119,7 +121,6 @@ function App() {
   const selectedRoutine =
     app.strengthRoutines.find((routine) => routine.id === selectedRoutineId) ?? app.strengthRoutines[0]
 
-  const todayHabits = app.habitLibrary.filter((habit) => habit.enabled && habit.showOnToday)
   const habitCompletionCount = completedHabitIds(app.state.today.completionTimesByHabitId, app.state.today.eventsByHabitId).length
   const openManagement = (section: LibrarySection) => { setLibrarySection(section); app.selectTab('library') }
   const completedExerciseIds = new Set([...app.state.strength.completedExerciseIds, ...Object.keys(app.state.today.foundationCompletedAt)])
@@ -188,16 +189,15 @@ function App() {
             breathSessions={app.breathTotalSessionsToday} breathRounds={app.breathTotalRoundsToday}
             strengthSummary={app.strengthSummaryToday} habitCompletionCount={habitCompletionCount}
             habitCaptureCount={Object.values(app.state.today.eventsByHabitId).reduce((sum, captures) => sum + (captures?.length ?? 0), 0)}
-            timelineEvents={app.todayTimeline} movementSessions={app.state.today.movementSessions} />
+            timelineEvents={app.todayTimeline} movementSessions={app.state.today.movementSessions} app={app} />
         )}
         {selectedTab === 'habit' && (
-          <HabitTab habits={todayHabits} allHabits={app.habitLibrary} today={app.state.today}
-            onToggle={app.toggleHabit} onAddMovement={app.addMovementSession} onSave={app.saveHabit} onMove={app.moveHabit}
-            onManage={() => openManagement('habits')} defaultsFor={app.movementDefaultsFor} />
+          <DominoHabitPage app={app} onManage={() => openManagement('habits')} onManageBlocks={() => openManagement('blocks')} />
         )}
 
         {selectedTab === 'history' && (
           <HistoryTab
+            app={app}
             selectedDayKey={app.selectedHistoryDayKey}
             maxDayKey={app.state.currentDayKey}
             habits={app.habitLibrary}
@@ -230,6 +230,7 @@ function App() {
         {selectedTab === 'library' && (
           <LibraryTab
             section={librarySection}
+            blocksPanel={<DominoManager app={app} onAddHabit={() => { setHabitDraft(EMPTY_HABIT_DRAFT); openManagement('habits') }} />}
             dataPanel={
               <DataBackupSection state={app.state} canPersist={app.canPersist} canRecover={app.canRecover} session={app.persistenceSession} onReplace={app.replaceAppState} />
             }
@@ -663,6 +664,7 @@ function BreathTab(props: BreathTabProps) {
 }
 
 interface TodayTabProps extends Omit<TodaySummaryCompactProps, 'movementTotalMinutes'> {
+  app: import('./lib/state').HealthRhythmViewModel
   currentDayLabel: string
   timelineEvents: TodayTimelineEvent[]
   movementSessions: MovementSession[]
@@ -673,64 +675,14 @@ function TodayTab(props: TodayTabProps) {
       <TodaySummaryCompact {...props} movementTotalMinutes={props.movementSessions.reduce((total, session) => total + session.durationMinutes, 0)} />
     </Card>
     <Card className="card-compact"><SectionHeader title="今日时间线" />
-      {props.timelineEvents.length === 0 ? <EmptyState text="今天还没有记录。" /> : <div className="event-stream">
-        {props.timelineEvents.map((event) => <details key={event.id} className="event-row">
-          <summary className="event-row-summary"><span className="event-time">{formatClockTime(event.timestamp)}</span><span className="event-title">{event.title}</span><span className="event-summary">{event.summary}</span></summary>
-          {event.detail && <p className="event-detail">{event.detail}</p>}
-        </details>)}
-      </div>}
+      <JournalComposer day={props.app.state.currentDayKey} onSave={props.app.saveDailyJournal} />
+      {props.timelineEvents.length === 0 ? <EmptyState text="今天还没有记录。" /> : <ActivityTimeline events={props.timelineEvents} day={props.app.state.currentDayKey} onEdit={props.app.editTimelineRecord} />}
+
     </Card>
   </div>
 }
-interface HabitTabProps {
-  habits: HabitDefinition[]
-  allHabits: HabitDefinition[]
-  today: import('./lib/domain').TodayState
-  onToggle: (id: string) => void
-  onAddMovement: (draft: MovementSessionDraft) => void
-  onSave: (habit: HabitDefinition) => void
-  onMove: (id: string, direction: 'up' | 'down') => void
-  onManage: () => void
-  defaultsFor: (id: string) => MovementDefaults
-}
-function HabitTab(props: HabitTabProps) {
-  const [organizing, setOrganizing] = useState(false)
-  const [durationId, setDurationId] = useState<string | null>(null)
-  const [minutes, setMinutes] = useState('30')
-  const habits = organizing ? props.allHabits : props.habits
-  const duration = parseMovementMinutes(minutes)
-  return <div className="page-grid">
-    <div className="compact-toolbar"><button type="button" className="secondary-button" onClick={() => setOrganizing(!organizing)}>{organizing ? '完成排序' : '排序与显示'}</button><button type="button" className="secondary-button" onClick={props.onManage}>新增 / 编辑</button></div>
-    {HABIT_GROUPS.map((group) => <Card key={group} className="card-compact"><SectionHeader title={group} />
-      <div className="habit-log-list">{habits.filter((habit) => habitGroup(habit) === group).map((habit, index, items) => {
-        const mode = habitMode(habit)
-        const count = props.today.eventsByHabitId[habit.id]?.length ?? 0
-        const sessions = props.today.movementSessions.filter((session) => session.typeId === habit.id)
-        const completed = Boolean(props.today.completionTimesByHabitId[habit.id])
-        return <div key={habit.id} className="habit-log-item">
-          <button type="button" className={`habit-log-button${completed || count || sessions.length ? ' is-complete' : ''}`} disabled={organizing} aria-pressed={mode === 'single' ? completed : undefined}
-            onClick={() => { if (mode === 'duration') { setDurationId(durationId === habit.id ? null : habit.id); setMinutes(String(props.defaultsFor(habit.id).durationMinutes)) } else props.onToggle(habit.id) }}>
-            <strong>{habit.name}</strong><span>{mode === 'captures' ? `${count}次 · ＋` : mode === 'duration' ? `${sessions.reduce((sum, session) => sum + session.durationMinutes, 0)} 分钟 · ＋` : completed ? '✓ 已完成' : '点按完成'}</span>
-          </button>
-          {organizing && <div className="habit-order-controls">
-            <button type="button" aria-label={`${habit.name}上移`} disabled={index === 0} onClick={() => props.onMove(habit.id, 'up')}>↑</button>
-            <button type="button" aria-label={`${habit.name}下移`} disabled={index === items.length - 1} onClick={() => props.onMove(habit.id, 'down')}>↓</button>
-            <select aria-label={`${habit.name}分组`} value={habitGroup(habit)} onChange={(event) => props.onSave({ ...habit, group: event.target.value as HabitGroup })}>{HABIT_GROUPS.map((value) => <option key={value}>{value}</option>)}</select>
-            <button type="button" onClick={() => props.onSave({ ...habit, enabled: true, showOnToday: !(habit.enabled && habit.showOnToday) })}>{habit.enabled && habit.showOnToday ? '隐藏' : '显示'}</button>
-          </div>}
-          {mode === 'duration' && durationId === habit.id && <div className="duration-capture">
-            <div className="chip-row">{MOVEMENT_DURATION_PRESETS.map((value) => <button key={value} type="button" className={`chip${Number(minutes) === value ? ' is-active' : ''}`} onClick={() => setMinutes(String(value))}>{value}</button>)}</div>
-            <div className="compact-toolbar"><label>分钟 <input aria-label={`${habit.name}分钟`} type="number" inputMode="numeric" min="1" max={MOVEMENT_MAX_MINUTES} value={minutes} onChange={(event) => setMinutes(event.target.value)} /></label>
-              <button type="button" className="primary-button" disabled={duration === null} onClick={() => { if (duration !== null) { props.onAddMovement({ typeId: habit.id, durationMinutes: duration }); setDurationId(null) } }}>记录</button>
-            </div>
-          </div>}
-        </div>
-      })}</div>
-    </Card>)}
-  </div>
-}
-
 interface HistoryTabProps {
+  app: import('./lib/state').HealthRhythmViewModel
   habits: HabitDefinition[]
   exercises: ExerciseDefinition[]
   selectedDayKey: string
@@ -793,6 +745,7 @@ function HistoryTab(props: HistoryTabProps) {
             key={props.selectedDayKey}
             dayKey={props.selectedDayKey}
             sessions={day.movementSessions}
+            timeLabels={Object.fromEntries(buildTodayTimeline(dayAsState(props.app.state, props.selectedDayKey), props.habits, []).filter((event) => event.kind === 'movement').map((event) => [event.id.replace('movement-', ''), eventTimeLabel(event)]))}
             labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
             emptyText="这一天没有运动记录。"
             onUpdate={props.onUpdateMovement}
@@ -827,6 +780,7 @@ function HistoryTab(props: HistoryTabProps) {
         </div>
       </Card>
 
+      <HistoryActivityPanel state={props.app.state} day={props.selectedDayKey} onEdit={props.app.editTimelineRecord} />
       <div className="two-column-cards">
         <PeriodSummaryCard
           kind="week"
@@ -1006,6 +960,7 @@ function MovementSessionList({
   dayKey,
   sessions,
   labels = {},
+  timeLabels = {},
   emptyText,
   onUpdate,
   onDelete,
@@ -1013,6 +968,7 @@ function MovementSessionList({
   dayKey: string
   sessions: MovementSession[]
   labels?: Record<string, string>
+  timeLabels?: Record<string, string>
   emptyText: string
   onUpdate: MovementUpdateHandler
   onDelete: MovementDeleteHandler
@@ -1028,6 +984,7 @@ function MovementSessionList({
           key={session.id}
           session={session}
           label={labels[session.typeId]}
+          timeLabel={timeLabels[session.id]}
           onUpdate={(draft) => onUpdate(dayKey, session.id, draft)}
           onDelete={() => onDelete(dayKey, session.id)}
         />
@@ -1039,11 +996,13 @@ function MovementSessionList({
 function MovementSessionRow({
   session,
   label,
+  timeLabel,
   onUpdate,
   onDelete,
 }: {
   session: MovementSession
   label?: string
+  timeLabel?: string
   onUpdate: (draft: MovementSessionDraft) => void
   onDelete: () => void
 }) {
@@ -1089,7 +1048,7 @@ function MovementSessionRow({
   return (
     <div className="movement-row">
       <div className="movement-row-main">
-        <span className="event-time">{formatClockTime(session.loggedAt)}</span>
+        <span className="event-time">{timeLabel ?? formatClockTime(session.loggedAt)}</span>
         <span className="event-title">{label ?? movementTypeLabel(session.typeId)}</span>
         <span className="event-summary">{meta}</span>
         {session.note && <p className="movement-note">{session.note}</p>}
@@ -1296,6 +1255,7 @@ function StrengthTab(props: StrengthTabProps) {
 }
 
 interface LibraryTabProps {
+  blocksPanel: ReactNode
   section: LibrarySection
   dataPanel: ReactNode
   habits: HabitDefinition[]
@@ -1366,10 +1326,11 @@ function LibraryTab(props: LibraryTabProps) {
           >
             数据与备份
           </button>
+          <button type="button" className={`chip${props.section === 'blocks' ? ' is-active' : ''}`} onClick={() => props.onSelectSection('blocks')}>管理模块</button>
         </div>
       </Card>
 
-      {props.section === 'data' ? (
+      {props.section === 'blocks' ? props.blocksPanel : props.section === 'data' ? (
         props.dataPanel
       ) : props.section === 'habits' ? (
         <>

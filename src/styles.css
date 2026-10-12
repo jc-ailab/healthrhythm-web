@@ -1526,3 +1526,22 @@ input, select, textarea { max-width: 100%; }
 @media (max-width: 480px) {
   .routine-override-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* V3.1 extends the existing compact rows and small forms. */
+.domino-block > summary { font-weight: 650; cursor: pointer; padding: 4px 0 10px; }
+.block-review p { margin: 2px 0 6px; }
+.block-review details > summary { color: var(--muted, #667); font-size: .8rem; cursor: pointer; }
+.record-editor { border-top: 1px solid #e4e8e4; padding-top: 8px; margin-top: 8px; }
+.record-editor .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.record-editor input, .record-editor select, .record-editor textarea, .block-review input { min-width: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
+.record-editor textarea { resize: vertical; }
+.block-management-row { display: flex; align-items: center; gap: 6px; margin: 8px 0; min-width: 0; }
+.block-management-row > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.block-management-row button { min-height: 36px; }
+.journal-composer { margin-bottom: 8px; }
+.domino-block .event-time, .event-row .event-time { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 350px) { .record-editor .form-grid { grid-template-columns: minmax(0, 1fr); } }
+.event-row-summary { grid-template-columns: 72px minmax(0, 1fr) auto; }
+.event-row-summary .event-summary { max-width: 100px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.event-row-summary .event-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.event-detail { overflow-wrap: anywhere; }

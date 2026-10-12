@@ -31,8 +31,8 @@ describe('V3 safe migration', () => {
   it('preserves V2 records, IDs, custom text, routines, and leading item order', () => {
     const old = v2()
     const state = restoreStoredState(old, now)
-    expect(state.version).toBe(4)
-    expect(state.today).toEqual(old.today)
+    expect(state.version).toBe(5)
+    expect(state.today).toMatchObject(old.today)
     expect(state.strength.completedExerciseIds).toEqual(old.strength.completedExerciseIds)
     expect(state.library.habits.slice(0, old.library.habits.length).map((item) => item.id)).toEqual(old.library.habits.map((item: HabitDefinition) => item.id))
     expect(habit(state, 'custom-habit-existing')).toEqual(old.library.habits[0])
@@ -133,7 +133,7 @@ describe('V3 persistence and logging', () => {
   it('keeps captures in the timeline after hiding an item or changing its recording mode', () => {
     const state = toggleHabitState(fresh(), 'mindfulEating', now)
     state.library.habits = state.library.habits.map((item) => item.id === 'mindfulEating' ? { ...item, showOnToday: false, enabled: false, recordingMode: 'single' } : item)
-    expect(buildTodayTimeline(state, [], []).filter((event) => event.id.startsWith('habit-mindfulEating'))).toHaveLength(1)
+    expect(buildTodayTimeline(state, [], []).filter((event) => event.kind === 'habit')).toHaveLength(1)
   })
   it('retains old single completions alongside captures and counts a unique habit only once', () => {
     let state = fresh(); state.today.completionTimesByHabitId.mindfulEating = now.toISOString()

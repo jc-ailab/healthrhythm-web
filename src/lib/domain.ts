@@ -1,3 +1,4 @@
+import { seedV31, type DayExtras, type DominoBlock, type RecordInfo } from './v31'
 import { normalizeHabit, translateBuiltIn, type HabitGroup, type RecordingMode, type HabitFrequency } from './v3'
 
 export type TabKey = 'rhythm' | 'breath' | 'today' | 'history' | 'strength' | 'habit' | 'library'
@@ -61,7 +62,7 @@ export interface BreathState {
   elapsedSecondsBeforeCurrentRun: number
 }
 
-export interface TodayState {
+export interface TodayState extends DayExtras {
   completionTimesByHabitId: Partial<Record<HabitId, string>>
   eventsByHabitId: Partial<Record<HabitId, string[]>>
   /** Completion time per daily foundation item (see FOUNDATION_ITEMS). */
@@ -96,7 +97,7 @@ export interface StrengthState {
   routines: StrengthRoutine[]
 }
 
-export interface DayRecord {
+export interface DayRecord extends DayExtras {
   dayKey: string
   rhythmEntries: RhythmEntry[]
   breathSessions: BreathSessionEntry[]
@@ -139,12 +140,13 @@ export interface ExerciseDefinition {
 }
 
 export interface LibraryState {
+  dominoBlocks?: DominoBlock[]
   habits: HabitDefinition[]
   exercises: ExerciseDefinition[]
 }
 
 export interface AppState {
-  version: 4
+  version: 5
   currentDayKey: string
   selectedTab: TabKey
   rhythm: RhythmState
@@ -229,7 +231,10 @@ export interface TodayTimelineEvent {
   title: string
   summary: string
   detail?: string
-  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement'
+  note?: string
+  assignedDate?: string
+  info?: RecordInfo
+  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement' | 'journal'
 }
 
 export const RHYTHM_BPM = 180
@@ -584,8 +589,8 @@ export function createEmptyDayRecord(dayKey: string): DayRecord {
 export function createInitialState(now: Date, selectedTab: TabKey = 'today'): AppState {
   const dayKey = toDayKey(now)
 
-  return {
-    version: 4,
+  return seedV31({
+    version: 5,
     currentDayKey: dayKey,
     selectedTab,
     rhythm: {
@@ -629,7 +634,7 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'today'): Ap
       exercises: createDefaultExercises(),
     },
     history: [],
-  }
+  })
 }
 
 export function toDayKey(date: Date) {

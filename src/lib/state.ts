@@ -1,3 +1,4 @@
+import { seedV31, validateV31, decorateTimeline, dayRecord, putDay, logDomino, saveBlock, moveBlock, saveJournal, editRecord, type DominoBlock, type RecordEdit } from './v31'
 import { normalizeHabit, translateBuiltIn, habitMode, moveHabit, completedHabitIds, HABIT_GROUPS, FREQUENCY_LABELS, MODE_LABELS } from './v3'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
@@ -73,7 +74,7 @@ import { PersistenceSession, RECOVERY_NOTICE } from './persistence'
 import { assertUsableState } from './dataTransfer'
 
 type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'strength'> & {
-  version?: 1 | 2 | 3
+  version?: 1 | 2 | 3 | 4
   selectedTab?: Exclude<TabKey, 'library'>
   strength: {
     completedExerciseIds: string[]
@@ -115,6 +116,12 @@ export interface MovementDefaults {
 }
 
 interface AppActions {
+  moveLooseHabit: (id: string, delta: -1 | 1) => void
+  logBlockItem: (id: string, assigned: string, blockId?: string, movement?: MovementSessionDraft) => void
+  saveDominoBlock: (block: DominoBlock) => void
+  moveDominoBlock: (id: string, delta: -1 | 1) => void
+  saveDailyJournal: (day: string, text: string, id?: string) => void
+  editTimelineRecord: (day: string, event: TodayTimelineEvent, edit: RecordEdit) => boolean
   selectTab: (tab: TabKey) => void
   selectRhythmDuration: (minutes: number) => void
   toggleRhythm: () => void
@@ -287,6 +294,31 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   }
 
   const actions: AppActions = {
+    moveLooseHabit(id, delta) {
+      if (!allowRecording()) return
+      setState((current) => {
+        const all = [...current.library.habits]
+        const ids = new Set(current.library.dominoBlocks?.flatMap((block) => block.itemIds))
+        const habit = all.find((item) => item.id === id)
+        if (!habit) return current
+        const items = all.filter((item) => !ids.has(item.id) && (habitMode(item) === 'duration') === (habitMode(habit) === 'duration'))
+        const index = items.findIndex((item) => item.id === id), other = index + delta
+        if (index < 0 || other < 0 || other >= items.length) return current
+        const a = all.indexOf(habit), b = all.indexOf(items[other]); [all[a], all[b]] = [all[b], all[a]]
+        return { ...current, library: { ...current.library, habits: all } }
+      })
+    },
+    logBlockItem(id, assigned, blockId, movement) {
+      if (!allowRecording()) return
+      setState((current) => logDomino(ensureCurrentDay(current, new Date()), id, assigned, current.library.dominoBlocks?.find((block) => block.id === blockId), new Date(), movement))
+    },
+    saveDominoBlock(block) { if (!allowRecording()) return; setState((current) => saveBlock(current, block)) },
+    moveDominoBlock(id, delta) { if (!allowRecording()) return; setState((current) => moveBlock(current, id, delta)) },
+    saveDailyJournal(day, text, id) { if (!allowRecording()) return; setState((current) => saveJournal(current, day, text, new Date(), id)) },
+    editTimelineRecord(day, event, edit) {
+      if (!allowRecording() || editRecord(state, day, event, edit) === state) return false
+      setState((current) => editRecord(current, day, event, edit)); return true
+    },
     selectTab(tab) {
       setState((current) => ({ ...current, selectedTab: tab }))
     },
@@ -728,12 +760,13 @@ export async function loadPersistedState(now: Date, session = new PersistenceSes
       try {
         const parsed: unknown = JSON.parse(raw)
         const version = (parsed as { version?: unknown } | null)?.version
-        if (typeof version === 'number' && version > 4) {
+        if (typeof version === 'number' && version > 5) {
           session.block('此存档来自更新版本，已暂停写入。请使用对应版本打开。')
           return
         }
-        if (![undefined, 1, 2, 3, 4].includes(version as number | undefined)) throw new Error('Unsupported schema')
-        if (canonical !== null || version === 4) assertCanonicalState(parsed)
+        if (![undefined, 1, 2, 3, 4, 5].includes(version as number | undefined)) throw new Error('Unsupported schema')
+        if (canonical !== null && version !== 4 && version !== 5) throw new Error('Invalid canonical schema')
+        if (version === 5) assertCanonicalState(parsed)
         state = restoreStoredState(parsed, now)
         assertUsableState(state)
       } catch {
@@ -742,7 +775,7 @@ export async function loadPersistedState(now: Date, session = new PersistenceSes
         session.block(RECOVERY_NOTICE, protectedRaw)
         return
       }
-      if (canonical === null) {
+      if (canonical === null || (JSON.parse(raw) as {version?: number}).version !== 5) {
         // Even schema 4 stranded under V2 needs an independent verified original copy.
         const key = writeBackup(raw, 'before-migration', now)
         if (key === null || readBackup(key) !== raw) {
@@ -763,7 +796,7 @@ function freshState(now: Date) {
 }
 
 export function assertCanonicalState(value: unknown) {
-  if ((value as { version?: unknown } | null)?.version !== 4) throw new Error('Expected schema 4')
+  if ((value as { version?: unknown } | null)?.version !== 5) throw new Error('Expected schema 5')
   assertStoredStateShape(value)
   assertUsableState(value as AppState)
 }
@@ -774,7 +807,9 @@ export function assertCanonicalState(value: unknown) {
  */
 export function restoreStoredState(value: unknown, now: Date): AppState {
   assertStoredStateShape(value)
-  const migrated = migrateState(value, now)
+  if (((value as {version?: number}).version ?? 0) >= 4) validateV31(value as AppState)
+  if ((value as {version?: number}).version === 5) assertUsableState(value as AppState)
+  const migrated = seedV31(migrateState(value, now))
   // Validate before day synchronization can replace a malformed current history row.
   assertUsableState(migrated)
   return syncHistory(ensureCurrentDay(migrated, now))
@@ -846,7 +881,7 @@ function assertStoredStateShape(value: unknown): asserts value is AppState | Leg
     }
   }
 
-  if (value.version === 3 || value.version === 4) {
+  if (value.version === 3 || value.version === 4 || value.version === 5) {
     if (!isRecord(library) || !Array.isArray(library.habits) || !Array.isArray(library.exercises)) {
       return fail('library')
     }
@@ -859,24 +894,24 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     const state = rawState as AppState
     return {
       ...state,
-      version: 4,
+      version: 5,
       today: normalizeTodayState(state.today),
       history: (state.history ?? []).map(normalizeDayRecord),
       strength: {
         ...state.strength,
-        routines: mergeBuiltInRoutines(state.strength.routines ?? [], state.version !== 4),
+        routines: mergeBuiltInRoutines(state.strength.routines ?? [], state.version < 4),
       },
       library: {
         ...state.library,
-        habits: mergeBuiltInHabits(state.library.habits, state.version !== 4),
-        exercises: mergeBuiltInExercises(state.library.exercises, state.version !== 4),
+        habits: mergeBuiltInHabits(state.library.habits, state.version < 4),
+        exercises: mergeBuiltInExercises(state.library.exercises, state.version < 4),
       },
     }
   }
 
   const legacy = rawState as LegacyAppState
   return syncHistory({
-    version: 4,
+    version: 5,
     currentDayKey: legacy.currentDayKey ?? toDayKey(now),
     selectedTab: legacy.selectedTab ?? 'rhythm',
     rhythm: legacy.rhythm,
@@ -1128,7 +1163,7 @@ function finalizeRhythmState(
     })
   }
 
-  return syncHistory({
+  return syncHistory(annotateTimedRecord({
     ...state,
     rhythm: {
       ...state.rhythm,
@@ -1139,7 +1174,7 @@ function finalizeRhythmState(
       lastSeenAt: null,
       elapsedSecondsBeforeCurrentRun: 0,
     },
-  })
+  }, 'rhythm', shouldRecord && state.rhythm.sessionStartAt ? entriesToday.at(-1) : undefined))
 }
 
 function appendRhythmEntry(entries: RhythmEntry[], newEntry: RhythmEntry) {
@@ -1371,7 +1406,7 @@ function finalizeBreathState(state: AppState, endTime: Date): AppState {
       ]
     : state.breath.entriesToday
 
-  return syncHistory({
+  return syncHistory(annotateTimedRecord({
     ...state,
     breath: {
       ...freshBreathState({
@@ -1382,7 +1417,7 @@ function finalizeBreathState(state: AppState, endTime: Date): AppState {
       status: shouldRecord ? 'completed' : 'idle',
       completedRounds: shouldRecord ? state.breath.completedRounds : 0,
     },
-  })
+  }, 'breath', shouldRecord ? entriesToday.at(-1) : undefined))
 }
 
 function currentBreathElapsedSeconds(state: AppState['breath'], now: Date) {
@@ -1413,6 +1448,10 @@ function syncHistory(state: AppState): AppState {
   currentRecord.habitEvents = state.today.eventsByHabitId
   currentRecord.foundation = state.today.foundationCompletedAt
   currentRecord.movementSessions = state.today.movementSessions
+  if (state.today.captureIds) currentRecord.captureIds = state.today.captureIds
+  if (state.today.recordDetails) currentRecord.recordDetails = state.today.recordDetails
+  if (state.today.journals) currentRecord.journals = state.today.journals
+  if (state.today.dominoSnapshots) currentRecord.dominoSnapshots = state.today.dominoSnapshots
 
   const history = [...state.history.filter((record) => record.dayKey !== state.currentDayKey), currentRecord].sort((left, right) =>
     left.dayKey < right.dayKey ? 1 : -1,
@@ -1425,39 +1464,7 @@ function syncHistory(state: AppState): AppState {
 }
 
 export function toggleHabitState(state: AppState, habitId: HabitId, nowDate: Date): AppState {
-  const next = state
-  const now = nowDate.toISOString()
-
-  if (habitMode(next.library.habits.find((habit) => habit.id === habitId) ?? { id: habitId } as HabitDefinition) === 'captures') {
-    // Append a new capture timestamp rather than toggling
-    const existing = next.today.eventsByHabitId[habitId] ?? []
-    return syncHistory({
-      ...next,
-      today: {
-        ...next.today,
-        eventsByHabitId: {
-          ...next.today.eventsByHabitId,
-          [habitId]: [...existing, now],
-        },
-      },
-    })
-  }
-
-  // Normal toggle behavior for all other habits
-  const completionTimesByHabitId = { ...next.today.completionTimesByHabitId }
-  if (completionTimesByHabitId[habitId]) {
-    delete completionTimesByHabitId[habitId]
-  } else {
-    completionTimesByHabitId[habitId] = now
-  }
-
-  return syncHistory({
-    ...next,
-    today: {
-      ...next.today,
-      completionTimesByHabitId,
-    },
-  })
+  return syncHistory(logDomino(state, habitId, state.currentDayKey, undefined, nowDate))
 }
 
 export function toggleFoundationItemState(state: AppState, itemId: FoundationItemId, now: Date): AppState {
@@ -1466,13 +1473,15 @@ export function toggleFoundationItemState(state: AppState, itemId: FoundationIte
   }
 
   const foundationCompletedAt = { ...state.today.foundationCompletedAt }
+  const recordDetails = { ...state.today.recordDetails }
   if (foundationCompletedAt[itemId]) {
     delete foundationCompletedAt[itemId]
+    delete recordDetails[`foundation-${itemId}`]
   } else {
     foundationCompletedAt[itemId] = now.toISOString()
   }
 
-  return syncHistory({ ...state, today: { ...state.today, foundationCompletedAt } })
+  return syncHistory({ ...state, today: { ...state.today, foundationCompletedAt, ...(state.today.recordDetails ? { recordDetails } : {}) } })
 }
 
 const MOVEMENT_INTENSITIES = Object.keys(MOVEMENT_INTENSITY_LABELS) as MovementIntensity[]
@@ -1538,23 +1547,16 @@ function mapMovementSessionsForDay(
   dayKey: string,
   transform: (sessions: MovementSession[]) => MovementSession[],
 ): AppState {
-  if (dayKey === state.currentDayKey) {
-    return syncHistory({
-      ...state,
-      today: { ...state.today, movementSessions: transform(state.today.movementSessions) },
-    })
+  if (dayKey !== state.currentDayKey && !state.history.some((record) => record.dayKey === dayKey)) return state
+  const record = dayRecord(state, dayKey)
+  const movementSessions = transform(record.movementSessions)
+  const recordDetails = record.recordDetails ? { ...record.recordDetails } : undefined
+  if (recordDetails) for (const old of record.movementSessions) {
+    const key = `movement-${old.id}`, next = movementSessions.find((item) => item.id === old.id)
+    if (!next) delete recordDetails[key]
+    else if (recordDetails[key]) recordDetails[key] = { ...recordDetails[key], note: next.note ?? '' }
   }
-
-  if (!state.history.some((record) => record.dayKey === dayKey)) {
-    return state
-  }
-
-  return syncHistory({
-    ...state,
-    history: state.history.map((record) =>
-      record.dayKey === dayKey ? { ...record, movementSessions: transform(record.movementSessions) } : record,
-    ),
-  })
+  return syncHistory(putDay(state, { ...record, movementSessions, ...(recordDetails ? { recordDetails } : {}) }))
 }
 
 /** Pre-fill for the quick log: the most recent session of this type, else the type's default. */
@@ -1639,6 +1641,7 @@ export function buildTodayTimeline(
       title: state.library.habits.find((habit) => habit.id === session.typeId)?.name ?? movementTypeLabel(session.typeId),
       summary: `${session.durationMinutes} 分钟`,
       detail: movementDetail(session),
+      note: session.note,
       kind: 'movement' as const,
     })),
     ...(state.strength.completedExerciseIds.length > 0 && state.strength.lastUpdatedAt
@@ -1664,20 +1667,13 @@ export function buildTodayTimeline(
       const completion = state.today.completionTimesByHabitId[id]
       // Show every stored capture, even after hiding or changing the item's recording mode.
       return [
-        ...captures.map((timestamp, index) => ({ id: `habit-${id}-${index}`, timestamp, title: habit?.name ?? id, summary: '已记录', detail: habit?.note, kind: 'habit' as const })),
+        ...captures.map((timestamp, index) => ({ id: state.today.captureIds?.[id]?.[index] ?? `capture-${state.currentDayKey}-${id}-${index}`, timestamp, title: habit?.name ?? id, summary: '已记录', detail: habit?.note, kind: 'habit' as const })),
         ...(completion ? [{ id: `habit-${id}`, timestamp: completion, title: habit?.name ?? id, summary: '已完成', detail: habit?.note, kind: 'habit' as const }] : []),
       ]
     }),
   ]
 
-  return events.sort((left, right) => {
-    const leftTime = new Date(left.timestamp).getTime()
-    const rightTime = new Date(right.timestamp).getTime()
-    if (leftTime === rightTime) {
-      return left.id.localeCompare(right.id)
-    }
-    return leftTime - rightTime
-  })
+  return decorateTimeline(events, dayRecord(state, state.currentDayKey))
 }
 
 function movementDetail(session: MovementSession) {
@@ -1713,7 +1709,9 @@ export function toggleStrengthExerciseState(state: AppState, exerciseId: string,
   const ids = new Set(state.strength.completedExerciseIds)
   if (ids.has(exerciseId)) ids.delete(exerciseId)
   else ids.add(exerciseId)
-  return syncHistory({ ...state, strength: { ...state.strength, completedExerciseIds: [...ids], lastUpdatedAt: now.toISOString() } })
+  const recordDetails = state.today.recordDetails ? { ...state.today.recordDetails } : undefined
+  if (ids.size === 0 && recordDetails) delete recordDetails['strength-today']
+  return syncHistory({ ...state, ...(recordDetails ? { today: { ...state.today, recordDetails } } : {}), strength: { ...state.strength, completedExerciseIds: [...ids], lastUpdatedAt: now.toISOString() } })
 }
 
 export function buildDailyHistorySummary(record: DayRecord, routines: ResolvedStrengthRoutine[]): HistoryDailySummary {
@@ -1989,4 +1987,17 @@ function resolveRoutineExercise(
     displayVolume: routineExercise.customVolume ?? exercise.suggestedVolume,
     displayTime: routineExercise.customTime ?? exercise.estimatedTime,
   }
+}
+
+// A completed timer has measured occurrence times. Record the actual observation/write time
+// separately; an older session's recording time is never reconstructed from its start time.
+function annotateTimedRecord(state: AppState, kind: 'rhythm' | 'breath', entry: { id: string; startAt: string } | undefined): AppState {
+  if (!entry) return state
+  const key = kind + '-' + entry.id
+  if (state.today.recordDetails?.[key]) return state
+  const start = new Date(entry.startAt)
+  return { ...state, today: { ...state.today, recordDetails: { ...state.today.recordDetails, [key]: {
+    occurredDate: toDayKey(start), occurredTime: String(start.getHours()).padStart(2, '0') + ':' + String(start.getMinutes()).padStart(2, '0'),
+    precision: 'exact', assignedDate: state.currentDayKey, recordedAt: new Date().toISOString(),
+  } } } }
 }

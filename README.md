@@ -1,6 +1,56 @@
 # HealthRhythm Web
 
-Chinese-first personal health routine app. V3 is a local review candidate; records remain in browser storage.
+Chinese-first personal health routine app. V3.1 is a local incremental candidate based on the V3 Preview commit `0bb80db`; records remain in browser storage.
+
+## V3.1 local candidate — Domino, backdating and notes
+
+This branch extends V3 without changing its six-tab architecture. No V3.1 push, PR update or deployment has been performed. Draft PR #7 and open PR #6 remain unchanged.
+
+- 晨间多米诺: 虔信时刻 → 晨习 → 无压 → 金刚功, with independent completions and live progress. 金刚功 reuses `jingang` and its existing preset/custom duration mechanism; its session appears once in the timeline and counts once in movement statistics.
+- 睡前多米诺: 断网 → 洗漱 → 泡脚 → 睡前轻阅读 → 早睡. 泡脚/早睡 reuse `foot-soak`/`earlySleep`. Tuesday morning's review has occurrence date Monday and assigned date Tuesday, with unknown occurrence time and Tuesday's actual recording timestamp. Choosing an earlier review date derives its preceding night in the same way.
+- Habit shows compact collapsible modules, then 日常习惯 and 其他运动. Existing normal single/multiple capture and duration behavior remains available; fallback ordering/visibility controls are retained. Management adds modules, edits names/date rules/visibility, reorders blocks/items, removes memberships and moves existing activities into a block. An activity has one current presentation home. Definitions/history are never deleted by membership changes.
+- Expanded Today/History timeline rows expose 编辑记录 / 添加备注. Occurrence date, optional local time, exact/approximate/unknown precision, assigned statistics date, movement duration and optional note can be corrected. IDs and original recording timestamps are retained. Moving a single completion into a day already holding that completion is refused rather than silently merging records. Rhythm/Breath measured durations remain intact; their dates/times/notes can be corrected.
+- ＋ 今日随记 stays collapsed until requested. Notes are associated with the selected local date, are editable in the timeline and survive refresh/history/export/import. No mood scales, photos, tags or interpretation are added.
+
+### Schema 5 and preservation
+
+Canonical storage and locking remain `health-rhythm-web-v3` and the existing origin-scoped Web Lock. V2/v1 keys are never written or deleted. Schema 4 is upgraded only after source validation and an independently verified verbatim `before-migration` backup, followed by canonical write/read-back validation. Any failure disables recording. Existing schema 5 is authoritative; corrupt data never triggers replacement from V2. Import supports schemas 1–5; JSON export format stays version 1. No dependency changes are included.
+
+New fields:
+
+- `library.dominoBlocks`: stable block IDs, names, ordered habit/activity IDs, assignment rule and hidden flag.
+- Optional `captureIds` alongside existing timestamp arrays, in Today/day records: assigns stable IDs to legacy captures once and preserves those IDs when an entry moves between dates. Original capture timestamps are not rewritten. Existing habit/exercise/movement/session IDs remain unchanged.
+- Optional `recordDetails` keyed by timeline record ID: `occurredDate`, nullable `occurredTime`, `precision`, `assignedDate`, `recordedAt` and optional `note`. Dates/times are local calendar values, not fabricated ISO instants. `recordedAt` is actual capture time for new logs; it can be null for older timed sessions whose recording moment was never stored. New completed timers separately record their actual observation time.
+- Optional `journals`: stable entry ID, text and original recording timestamp.
+- Optional `dominoSnapshots`: day-level grouping definitions captured on the first module log. History uses these snapshots, not current memberships/names/rules, to report historical progress. Existing V3 history is not retroactively assigned new module snapshots.
+
+Default module seeding happens once when definitions are absent; an intentionally empty block array, custom block order and hidden preferences persist. Known existing stable IDs are reused. Custom items that merely share a display name are preserved and not automatically guessed. A conflicting reserved new ID without matching built-in provenance gets a deterministic suffixed default ID; the original remains intact. Use 管理模块 to select the preferred existing item and remove the unused default membership, then hide the unused definition if desired. User-customized names and pre-existing habit/exercise/routine ordering are retained.
+
+Date arithmetic uses local calendar noon plus `setDate`, never a 24-hour ISO subtraction. This supports Sydney DST transitions and month/year/leap-year boundaries. Backdated morning logs also default to unknown occurrence time; today's clock is not copied into a past activity. Approximate times remain marked 约. Date-only bedtime rows say 昨晚 · 时间未指定; data-entry time is secondary and explicitly labeled. Legacy habit/movement/strength timestamps are shown as 录入 times, not silently promoted to measured occurrence times. Old Rhythm/Breath session start times remain measured occurrence times.
+
+Validation rejects invalid extensions, duplicate capture IDs, dangling metadata and inconsistent current-day history mirrors before synchronization could discard records. Single completions, foundation completions and the existing strength aggregate retain their original scoped timeline IDs. Multi-captures gain explicit stable IDs because V3's transient array-index row IDs were not persistent event identities.
+
+Real `0bb80db` regressions demonstrate that an already-open V3 writer fails its snapshot comparison after migration and a freshly opened V3 refuses schema 5. Real V2 loader regressions continue to prove that old-key writes cannot affect canonical V3. Current V3.1 stale-tab protection and import-generation guards remain active. Rolling code back to V3 leaves schema 5 read-only; retain a schema 5 off-device export and upgrade again to regain normal use. Never downgrade or feed new fields to an old loader. Data already lost before earlier fixes cannot be reconstructed.
+
+### Validation and remaining acceptance
+
+- `npm run build`: PASS; `npm run lint`: PASS.
+- `npm test`: **277 tests PASS, 10 files**. Includes 40 V3.1 model regressions, three compact-component rendering cases, all prior V3/V2 isolation regressions, real V3 writer behavior, schema 4 preservation, Sydney DST/boundaries, backdating, partial progress, notes/journals, stable IDs, sorting/moving memberships and complete JSON import/restore round trips.
+- `npm audit --omit=dev`: **0 vulnerabilities**. Package files/lockfile unchanged. Development-tool audit findings are outside this feature scope.
+- All data tests use synthetic in-memory storage; no production or existing browser storage was accessed, reset or deleted.
+- **Not yet verified:** actual browser geometry at 320px/390px/430px, physical iPhone forms/touch, file saving/import, audio/background behavior. Browser connection was unavailable; this is not claimed as a visual or iPhone pass. CSS constrains native fields and long rows, and compact server rendering is tested, but those are not a substitute for viewport checks.
+- CSV analysis export is deferred. No drag-and-drop dependency was added; accessible up/down ordering is available.
+
+Before a controlled Preview update: review this local branch, reconnect the browser and check the three widths, then obtain explicit publication approval. Use a copy of an off-device V3 backup on a separate Preview origin. Keep PR #7 Draft and PR #6 open; do not merge/deploy Production during acceptance.
+
+Short iPhone checklist:
+1. Import a copied schema 4 backup; verify old records/custom items and the two initial blocks without duplicate 金刚功.
+2. Complete any two morning items; log 金刚功 with a custom duration and check one timeline row/one movement total.
+3. Review last night and an earlier night; verify occurrence date, assigned date, unknown time and unchanged recording timestamp.
+4. Edit swimming time/date/duration, approximate time and note; check its ID and daily/weekly/monthly statistics.
+5. Add/edit a journal on a selected day; refresh, export/import/restore, and compare every note and record.
+6. Reorder/move/hide modules/items, inspect prior-day progress snapshots and test two-tab conflicts.
+7. Check 320px/390px/430px, no horizontal overflow, collapsed rows and optional-time controls.
 
 ## Stack
 
@@ -189,3 +239,21 @@ V2 rollback reads its unchanged old key, **not** new V3 records; it does not syn
 - `src/lib/storageIsolation.test.ts`
 - `src/lib/storageKeys.ts`
 - `src/lib/testSetup.ts`
+
+## V3.1 files changed
+
+- `README.md`
+- `src/App.tsx`
+- `src/lib/coreActivities.test.ts`
+- `src/lib/dataTransfer.test.ts`
+- `src/lib/dataTransfer.ts`
+- `src/lib/domain.ts`
+- `src/lib/state.test.ts`
+- `src/lib/state.ts`
+- `src/lib/storageIsolation.test.ts`
+- `src/lib/v3.test.ts`
+- `src/styles.css`
+- `src/V31Panels.test.ts`
+- `src/V31Panels.tsx`
+- `src/lib/v31.test.ts`
+- `src/lib/v31.ts`

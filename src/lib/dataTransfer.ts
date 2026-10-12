@@ -1,3 +1,4 @@
+import { validateV31 } from './v31'
 // Export, import and backup restore. Everything that replaces live data goes through
 // `replaceWithSafetyCopy`, which never swaps data in before a copy of the current state is
 // stored and the new state is written.
@@ -20,7 +21,7 @@ import { pruneSafetyCopies, readBackup, writeBackup, type BackupReason } from '.
 export const EXPORT_FORMAT = 'healthrhythm-export'
 export const EXPORT_FORMAT_VERSION = 1
 /** Saves with these `version` values are understood by migrateState. */
-const SUPPORTED_STATE_VERSIONS: readonly unknown[] = [undefined, 1, 2, 3, 4]
+const SUPPORTED_STATE_VERSIONS: readonly unknown[] = [undefined, 1, 2, 3, 4, 5]
 // localStorage holds roughly 5 MB per site, so nothing larger could be stored anyway.
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024
 export const SAFETY_COPIES_KEPT = 5
@@ -171,6 +172,7 @@ export function summarizeState(state: AppState): DataSummary {
 
 function hasContent(record: DayRecord) {
   return (
+    (record.journals?.length ?? 0) > 0 ||
     record.rhythmEntries.length > 0 ||
     record.breathSessions.length > 0 ||
     record.strengthCompletedExerciseIds.length > 0 ||
@@ -247,6 +249,7 @@ const isMovementSession = (entry: Record<string, unknown>) =>
   (entry.note === undefined || isString(entry.note))
 
 export function assertUsableState(state: AppState) {
+  validateV31(state)
   if (!isString(state.currentDayKey) || !DAY_KEY_PATTERN.test(state.currentDayKey)) fail('currentDayKey')
 
   checkArray(state.rhythm.entriesToday, 'rhythm.entriesToday', isRhythmEntry)
