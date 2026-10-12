@@ -1,6 +1,47 @@
 # HealthRhythm Web
 
-Chinese-first personal health routine app. V3.1 is a local incremental candidate based on the V3 Preview commit `0bb80db`; records remain in browser storage.
+Chinese-first personal health routine app. V3.2 is a local incremental candidate based on V3.1 commit `feff59340757c298aaa13e0bdb72df0f60804a40`; records remain in browser storage.
+
+## V3.2 local candidate — universal editable groups
+
+Local branch: `feature/healthrhythm-v3.2`, based on the verified V3.1 branch/commit above. PR #7 and PR #8 remain unmerged; this candidate is not pushed, published or deployed. Prior V3/V3.1 implementation snapshots below describe their historical pre-publication state.
+
+### Phone interaction
+
+- 管理 → 管理组合: create/rename groups, add references to existing habits/movement, exercises, routines, Rhythm or Breath, remove/reorder items, choose display tab (习惯/力量/节律/呼吸), reorder groups, hide/show/enable and select same-day, next-day-review or manual date policies. The same definition can belong to several groups; nested groups and permanent deletion are not supported.
+- While editing a group, 新增习惯 / 运动 and 新增动作 open the original Library editors. The group draft stays mounted across Library sections; return to 管理组合 and select the new definition in 添加项目. Existing routine creation/editing remains in the original Library section.
+- First selection creates a session automatically; later selections and undo update that ID through the existing safe autosave. Partial completion is valid. ＋ 再做一次 creates an explicitly separate execution; a selector distinguishes same-day sessions. No completion Save Group step exists.
+- Each session has one shared occurrence/date/precision/note editor. Completion taps autosave immediately; shared-time edits have one small confirmation form. Unknown times stay null; entering a previously unknown time defaults to approximate. Assigned date can move the whole session and its child records together without changing their IDs or original recording timestamps. Existing item occurrence/note overrides remain authoritative.
+- 金刚功 retains presets/custom duration and its one existing `jingang` definition. Core Trio references `lowerAbs`, `lowerBack`, `pelvicFloor` with original exercise prescriptions; it supports 1/3, 2/3 or 3/3. Existing foundation completions remain separate and intact.
+- Rhythm/Breath launch their actual specialised timers; an already-running timer cannot be reassigned. Completed timer records are associated once. Routine members launch the existing Strength exercise workflow using the session's prescription snapshot; partial exercises save immediately. The banner exposes the active association and an explicit end action. Independent routines and temporary exercises remain available outside group execution.
+- Today/History render one expandable row per session, hiding the associated child rows. Expanded details retain actual movement durations, breathing patterns/rounds, strength prescriptions, individual notes and partial completion. Independent records remain independent. Weekly/monthly views add basic group session counts and collapsible item frequencies; movement minutes, unique item-days and actual exercise completions continue to derive from underlying records. Group rows never add an extra exercise or movement completion.
+
+### Model and schema 6
+
+Canonical storage remains **`health-rhythm-web-v3`**; V2/V1 keys are read-only migration sources and are never cleared. Key/lock values and the existing persistence/backup implementations remain unchanged.
+
+- `library.groups`: ordered templates with stable ID/name, ordered `{kind,id}` references, display location, assignment policy, hidden and enabled flags. No activity definitions are cloned.
+- Day/Today `groupSessions`: stable execution ID, group ID/name, assignment-policy and member/prescription snapshots, shared `RecordInfo` (`occurredDate`, nullable `occurredTime`, precision, assignedDate, original recordedAt, optional note), and completed member references to actual event IDs. Template changes cannot rewrite session denominators, names, memberships or prescriptions.
+- Habit completions inside sessions use the existing timestamp/capture-ID arrays, allowing repeated single habits in distinct executions without replacing an older daily completion. Movements and timers use their existing record arrays. New per-execution strength `strengthEntries` retain a stable record ID, existing exercise ID, prescription snapshot and actual recordedAt; legacy daily strength/foundation arrays are preserved. Overlapping exercise/routine references within one execution can share one physical record, which is removed only when no member references it.
+- Optional `pendingGroupLaunch` associates a specialised workflow with an execution and survives navigation/refresh. Actual timer start/end/pattern/round/elapsed measurements stay unchanged; shared occurrence information does not replace those measured values.
+
+Migration validates schema 5 (and supported earlier data), creates/verifies a verbatim protected backup, migrates and writes/readback-validates schema 6 before activation. Corrupt canonical data never falls back to older V2; storage/lock/backup/validation failures stop writing. Web Locks, exact loaded-byte comparisons and import-generation guards remain active. Current-day mirrors, globally stable group/strength IDs, snapshot shapes, event ownership and reference integrity are validated before synchronization can discard anything.
+
+Domino templates map once from the existing `dominoBlocks`, preserving IDs, names, membership, order, date policy and hidden preferences. Legacy definitions/day snapshots and independent records remain verbatim. They do not prove session boundaries, so migration creates **no fabricated historical sessions or occurrence times**. Known old daily progress is shown as 旧版当日项目; new grouped records are excluded from that legacy count. Core Trio seeds only from the three known existing IDs with foundation provenance. An intentionally empty template list stays empty. Imported current-day completions should not be recorded again unless a new execution actually occurred.
+
+Cross-version safety is demonstrated using the actual Git sources at V2 `e5a514e`, V3 `0bb80db` and V3.1 `feff593`: already-open V3/V3.1 writers fail the locked snapshot comparison after migration; fresh prior versions reject schema 6, and prior V3.1 import replacement cannot bypass the block. V2 writes only its independent key. This evidence, rather than a schema-number assumption alone, supports retaining the V3 canonical lineage.
+
+JSON export format stays version 1 and includes all templates, sessions, snapshots, child IDs/records, shared time, notes, journals and prior records. Imports support schemas 1–6 with verified replacement backups. Older schemas migrate on import; schema 6 round-trips without losing fields. Unknown newer schemas are refused. Rollback to V3/V3.1 is read-only on schema 6; keep off-device schema 6 exports and upgrade again rather than downgrading or clearing storage. Browser storage eviction/quota remains a platform risk.
+
+### Validation and acceptance
+
+- Build/lint pass; **345 tests pass across 12 files**, including 62 focused group-model tests and six compact rendering tests. Focused group tests execute actual prior loaders and cover migration failures, stale tabs, independent item counts, DST/date boundaries, snapshots, shared-time movement, backdated mixed records and complete JSON restoration. No dependencies were changed; production dependency audit is zero.
+- Local validation ran on Node 23.10.0, outside Vitest's declared engine range. The unchanged CI uses supported Node 22; repeat its checks before publication.
+- Browser connection is unavailable: actual 320px/390px/430px geometry, Safari date/time controls, touch targets, file saving and physical iPhone behavior remain **unverified**. Component rendering checks are not visual evidence. CSV remains deferred; ordering uses accessible up/down controls.
+- iPhone acceptance: import a copy of a V3.1 backup on an isolated Preview origin; compare historical/custom records and Domino settings; create a mixed group and a new item through Library; complete/undo partial Core Trio and movement duration; edit one shared approximate/unknown time and note; run two same-day executions; change template membership and check old denominators; use real Rhythm/Breath/routine workflows; verify History frequencies, JSON restore, refresh/day rollover and stale tabs; inspect all six tabs and forms at 320/390/430px without clearing storage.
+
+Exact changed web-file manifest:
+`README.md`, `src/App.tsx`, `src/GroupPanels.tsx`, `src/GroupPanels.test.ts`, `src/V31Panels.tsx`, `src/V31Panels.test.ts`, `src/lib/groups.ts`, `src/lib/groups.test.ts`, `src/lib/domain.ts`, `src/lib/state.ts`, `src/lib/state.test.ts`, `src/lib/v31.ts`, `src/lib/v31.test.ts`, `src/lib/dataTransfer.ts`, `src/lib/dataTransfer.test.ts`, `src/lib/storageKeys.ts` (comment only), `src/lib/storageIsolation.test.ts`, `src/lib/coreActivities.test.ts`, `src/lib/v3.test.ts`, `src/styles.css`.
 
 ## V3.1 local candidate — Domino, backdating and notes
 

@@ -1,3 +1,4 @@
+import { GroupList, GroupRecordDetails } from './GroupPanels'
 import { useState } from 'react'
 import { makeLocalId, parseMovementMinutes, MOVEMENT_DURATION_PRESETS, MOVEMENT_MAX_MINUTES, type AppState, type HabitDefinition, type TodayTimelineEvent, type MovementSessionDraft } from './lib/domain'
 import { habitMode } from './lib/v3'
@@ -5,7 +6,7 @@ import { dayRecord, dayAsState, dominoProgress, occurrenceDay, doneInDay, eventI
 import { buildTodayTimeline, type HealthRhythmViewModel } from './lib/state'
 
 type EditHandler = HealthRhythmViewModel['editTimelineRecord']
-export function ActivityTimeline({ events, day, onEdit }: { events: TodayTimelineEvent[]; day: string; onEdit: EditHandler }) {
+export function ActivityTimeline({ events, day, onEdit, app }: { events: TodayTimelineEvent[]; day: string; onEdit: EditHandler; app?: HealthRhythmViewModel }) {
   const [editing, setEditing] = useState<TodayTimelineEvent | null>(null)
   const [error, setError] = useState('')
   const [draft, setDraft] = useState<RecordEdit | null>(null)
@@ -16,7 +17,7 @@ export function ActivityTimeline({ events, day, onEdit }: { events: TodayTimelin
       {!event.info && <p className="event-detail">归属：{event.assignedDate} · {event.kind === 'rhythm' || event.kind === 'breath' ? '计时记录；录入时刻未单独记录' : `旧记录；仅保留录入时间 ${new Date(event.timestamp).toLocaleString('zh-CN')}`}</p>}
       {event.info && <p className="event-detail">发生：{event.info.occurredDate} {event.info.occurredTime ? `${event.info.precision === 'approximate' ? '约 ' : ''}${event.info.occurredTime}` : '时间未指定'} · 归属：{event.info.assignedDate}<br />录入于：{event.info.recordedAt ? new Date(event.info.recordedAt).toLocaleString('zh-CN') : '未记录（旧存档）'}</p>}
       {event.info?.note && !event.detail?.includes(event.info.note) && <p className="event-detail">{event.info.note}</p>}
-      <button type="button" className="text-button" onClick={() => { setEditing(event); setError(''); setDraft({ ...eventInfo(event), note: event.kind === 'journal' ? event.detail : event.info?.note ?? event.note ?? '', ...(event.kind === 'movement' ? { durationMinutes: Number.parseInt(event.summary) } : {}) }) }}>编辑记录 / 添加备注</button>
+      {event.groupSession && app ? <GroupRecordDetails app={app} session={event.groupSession} /> : <button type="button" className="text-button" onClick={() => { setEditing(event); setError(''); setDraft({ ...eventInfo(event), note: event.kind === 'journal' ? event.detail : event.info?.note ?? event.note ?? '', ...(event.kind === 'movement' ? { durationMinutes: Number.parseInt(event.summary) } : {}) }) }}>编辑记录 / 添加备注</button>}
       {editing?.id === event.id && draft && <form className="record-editor" onSubmit={(e) => {
         e.preventDefault()
         if (!validInfo(draft)) { setError('请检查日期与时间；时间未指定时请选择未知精度。'); return }
@@ -37,13 +38,13 @@ export function ActivityTimeline({ events, day, onEdit }: { events: TodayTimelin
     </details>)}
   </div>
 }
-export function HistoryActivityPanel({ state, day, onEdit }: { state: AppState; day: string; onEdit: EditHandler }) {
+export function HistoryActivityPanel({ state, day, onEdit, app }: { state: AppState; day: string; onEdit: EditHandler; app?: HealthRhythmViewModel }) {
   const record = dayRecord(state, day)
   const events = buildTodayTimeline(dayAsState(state, day), state.library.habits, [])
   return <section className="card card-compact">
     {record.dominoSnapshots?.map((block) => <p key={block.id} className="activity-log-label">{block.name} · {dominoProgress(record, block)}/{block.itemIds.length}</p>)}
     <h2>当日时间线与随记</h2>
-    <ActivityTimeline key={day} events={events} day={day} onEdit={onEdit} />
+    <ActivityTimeline key={day} events={events} day={day} onEdit={onEdit} app={app} />
     {!events.length && <p className="empty-state">这一天没有记录。</p>}
   </section>
 }
@@ -61,12 +62,11 @@ export function JournalComposer({ day, onSave }: { day: string; onSave: HealthRh
 interface HabitPageProps { app: HealthRhythmViewModel; onManage: () => void; onManageBlocks: () => void }
 export function DominoHabitPage({ app, onManage, onManageBlocks }: HabitPageProps) {
   const [organizing, setOrganizing] = useState(false)
-  const blocks = app.state.library.dominoBlocks ?? []
-  const assigned = new Set(blocks.flatMap((block) => block.itemIds))
+  const assigned = new Set(app.state.library.groups?.flatMap((group) => group.items.filter((item) => item.kind === 'habit').map((item) => item.id)) ?? [])
   const habits = app.habitLibrary.filter((habit) => (organizing || habit.enabled && habit.showOnToday) && !assigned.has(habit.id))
   return <div className="page-grid">
-    <div className="compact-toolbar"><button type="button" className="secondary-button" onClick={() => setOrganizing(!organizing)}>{organizing ? '完成排序' : '排序与显示'}</button><button type="button" className="secondary-button" onClick={onManageBlocks}>管理模块</button><button type="button" className="secondary-button" onClick={onManage}>新增 / 编辑项目</button></div>
-    {blocks.filter((block) => !block.hidden).map((block) => <HabitBlock key={block.id} app={app} block={block} habits={block.itemIds.map((id) => app.habitLibrary.find((habit) => habit.id === id)).filter((habit): habit is HabitDefinition => Boolean(habit))} />)}
+    <div className="compact-toolbar"><button type="button" className="secondary-button" onClick={() => setOrganizing(!organizing)}>{organizing ? '完成排序' : '排序与显示'}</button><button type="button" className="secondary-button" onClick={onManage}>新增 / 编辑项目</button></div>
+    <GroupList app={app} location="habit" onManage={onManageBlocks} />
     <HabitBlock app={app} organizing={organizing} habits={habits.filter((habit) => habitMode(habit) !== 'duration')} title="日常习惯" />
     <HabitBlock app={app} organizing={organizing} habits={habits.filter((habit) => habitMode(habit) === 'duration')} title="其他运动" />
   </div>

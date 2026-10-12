@@ -31,7 +31,7 @@ describe('V3 safe migration', () => {
   it('preserves V2 records, IDs, custom text, routines, and leading item order', () => {
     const old = v2()
     const state = restoreStoredState(old, now)
-    expect(state.version).toBe(5)
+    expect(state.version).toBe(6)
     expect(state.today).toMatchObject(old.today)
     expect(state.strength.completedExerciseIds).toEqual(old.strength.completedExerciseIds)
     expect(state.library.habits.slice(0, old.library.habits.length).map((item) => item.id)).toEqual(old.library.habits.map((item: HabitDefinition) => item.id))

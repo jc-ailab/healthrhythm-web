@@ -1,3 +1,4 @@
+import { seedGroups, type GroupTemplate, type GroupSession, type GroupLaunch } from './groups'
 import { seedV31, type DayExtras, type DominoBlock, type RecordInfo } from './v31'
 import { normalizeHabit, translateBuiltIn, type HabitGroup, type RecordingMode, type HabitFrequency } from './v3'
 
@@ -140,13 +141,15 @@ export interface ExerciseDefinition {
 }
 
 export interface LibraryState {
+  groups?: GroupTemplate[]
   dominoBlocks?: DominoBlock[]
   habits: HabitDefinition[]
   exercises: ExerciseDefinition[]
 }
 
 export interface AppState {
-  version: 5
+  pendingGroupLaunch?: GroupLaunch
+  version: 6
   currentDayKey: string
   selectedTab: TabKey
   rhythm: RhythmState
@@ -202,6 +205,8 @@ export interface ResolvedRoutineExercise extends ResolvedStrengthExercise {
 }
 
 export interface HistorySummary {
+  groups: ReturnType<typeof import('./groups').groupStatistics>
+  items: ReturnType<typeof import('./groups').itemStatistics>
   habitCompletionsCount: number
   habitCapturesCount: number
   strengthCompletionsCount: number
@@ -234,7 +239,8 @@ export interface TodayTimelineEvent {
   note?: string
   assignedDate?: string
   info?: RecordInfo
-  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement' | 'journal'
+  groupSession?: GroupSession
+  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement' | 'journal' | 'group'
 }
 
 export const RHYTHM_BPM = 180
@@ -589,8 +595,8 @@ export function createEmptyDayRecord(dayKey: string): DayRecord {
 export function createInitialState(now: Date, selectedTab: TabKey = 'today'): AppState {
   const dayKey = toDayKey(now)
 
-  return seedV31({
-    version: 5,
+  return seedGroups(seedV31({
+    version: 6,
     currentDayKey: dayKey,
     selectedTab,
     rhythm: {
@@ -634,7 +640,7 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'today'): Ap
       exercises: createDefaultExercises(),
     },
     history: [],
-  })
+  }))
 }
 
 export function toDayKey(date: Date) {
