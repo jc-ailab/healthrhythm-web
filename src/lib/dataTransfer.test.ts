@@ -109,7 +109,7 @@ describe('export', () => {
     const state = richState()
     const file = JSON.parse(buildExportText(state, NOW))
 
-    expect(file).toMatchObject({ format: EXPORT_FORMAT, formatVersion: 1, stateVersion: 4, exportedAt: NOW.toISOString() })
+    expect(file).toMatchObject({ format: EXPORT_FORMAT, formatVersion: 1, stateVersion: 5, exportedAt: NOW.toISOString() })
     expect(JSON.stringify(file.state)).toBe(json(state))
     expect(Object.keys(file).sort()).toEqual(['exportedAt', 'format', 'formatVersion', 'state', 'stateVersion'])
   })
@@ -181,7 +181,7 @@ describe('import parsing', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.state.version).toBe(4)
+    expect(result.state.version).toBe(5)
     expect(result.state.library.habits.length).toBeGreaterThan(0)
     expect(result.state.today.movementSessions).toEqual([])
     expect(result.state.history.find((record) => record.dayKey === '2026-04-14')!.rhythmEntries).toHaveLength(1)
@@ -240,7 +240,7 @@ describe('import parsing', () => {
 
   it.each([
     ['a newer export format', exportWith((file) => (file.formatVersion = 2))],
-    ['a newer state version', exportWith((file) => (file.state.version = 5))],
+    ['a newer state version', exportWith((file) => (file.state.version = 6))],
   ])('rejects %s as unsupported', (_, text) => {
     expect(parseImportText(text, NOW)).toEqual({ ok: false, error: DATA_ERRORS.unsupportedFormat })
   })

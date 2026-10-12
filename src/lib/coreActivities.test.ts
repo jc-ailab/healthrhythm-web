@@ -109,7 +109,7 @@ describe('loading saves written before foundation and movement existed', () => {
     const { state, notice } = await loadPersistedState(at(10))
 
     expect(notice).toBeNull()
-    expect(state.version).toBe(4)
+    expect(state.version).toBe(5)
     expect(state.today.foundationCompletedAt).toEqual({})
     expect(state.today.movementSessions).toEqual([])
     expect(state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })

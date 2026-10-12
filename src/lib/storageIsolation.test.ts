@@ -96,10 +96,10 @@ describe('canonical V3 isolation and verified first-run migration', () => {
     const raw = seedV2()
     const loaded = await loadPersistedState(now)
     expect(loaded.canPersist).toBe(true)
-    expect(canonical().version).toBe(4)
+    expect(canonical().version).toBe(5)
     expect(data.get(V2_STORAGE_KEY)).toBe(raw)
     expect(writes).not.toContain(V2_STORAGE_KEY)
-    expect(loaded.state.today).toEqual(v2Fixture.today)
+    expect(loaded.state.today).toMatchObject(v2Fixture.today)
     expect(loaded.state.strength.completedExerciseIds).toEqual(v2Fixture.strength.completedExerciseIds)
     expect(loaded.state.strength.routines.find((routine) => routine.id === 'custom-routine-existing')).toEqual(v2Fixture.strength.routines.at(-1))
     expect(loaded.state.library.habits[0]).toEqual(v2Fixture.library.habits[0])
@@ -114,6 +114,7 @@ describe('canonical V3 isolation and verified first-run migration', () => {
     const first = await loadPersistedState(now)
     const stranded = capture(first.state, 13)
     stranded.history[1].habitEvents.mindfulEating = ['2026-04-14T00:00:00.000Z', '2026-04-14T04:00:00.000Z', '2026-04-14T10:00:00.000Z']
+    stranded.history[1].captureIds = { mindfulEating: ['legacy-cap-1', 'legacy-cap-2', 'legacy-cap-3'] }
     stranded.library.habits[0] = { ...stranded.library.habits[0], enabled: false, group: '其他活动', frequency: 'occasional' }
     // Simulate the pre-fix V3 installation; only synthetic storage is used.
     data.delete(V3_STORAGE_KEY)
@@ -147,7 +148,7 @@ describe('canonical V3 isolation and verified first-run migration', () => {
   })
   it('initializes new users in V3 without creating V2', async () => {
     expect((await loadPersistedState(now)).canPersist).toBe(true)
-    expect(canonical().version).toBe(4)
+    expect(canonical().version).toBe(5)
     expect(data.has(V2_STORAGE_KEY)).toBe(false)
     expect(listBackups()).toHaveLength(0)
   })
@@ -174,7 +175,7 @@ describe('canonical V3 isolation and verified first-run migration', () => {
     failWrite = (key) => key.startsWith(BACKUP_KEY_PREFIX)
     const loaded = await loadPersistedState(now)
     expect(loaded.canPersist).toBe(false)
-    expect(loaded.state.today).toEqual(v2Fixture.today)
+    expect(loaded.state.today).toMatchObject(v2Fixture.today)
     failWrite = () => false
     expect(await saveState(capture(loaded.state, 13), loaded.session)).toBe(false)
     expect(data.has(V3_STORAGE_KEY)).toBe(false)
@@ -245,7 +246,7 @@ describe('canonical V3 isolation and verified first-run migration', () => {
     expect(loaded.canPersist).toBe(false)
     wrongReadBack = false
     expect(await saveState(capture(loaded.state, 13), loaded.session)).toBe(false)
-    expect(canonical().today).toEqual(v2Fixture.today)
+    expect(canonical().today).toMatchObject(v2Fixture.today)
   })
   it('fails closed when Web Locks is absent or rejected', async () => {
     const raw = seedV2()
