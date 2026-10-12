@@ -1,3 +1,4 @@
+import type { GroupDayExtras } from './groups'
 import { parseMovementMinutes, createEmptyDayRecord, shiftDayKey, toDayKey, makeLocalId, type AppState, type DayRecord, type HabitDefinition, type TodayTimelineEvent, type MovementSessionDraft } from './domain'
 import { habitMode } from './v3'
 
@@ -17,7 +18,7 @@ export interface RecordInfo {
   note?: string
 }
 export interface JournalEntry { id: string; text: string; recordedAt: string }
-export interface DayExtras {
+export interface DayExtras extends GroupDayExtras {
   captureIds?: Partial<Record<string, string[]>>
   recordDetails?: Record<string, RecordInfo>
   journals?: JournalEntry[]
@@ -53,7 +54,7 @@ export function seedV31(state: AppState): AppState {
     return Object.keys(ids).length ? ids : undefined
   }
   return {
-    ...state, version: 5, library: { ...state.library, habits, dominoBlocks: blocks },
+    ...state, library: { ...state.library, habits, dominoBlocks: blocks },
     today: { ...state.today, ...(withIds(state.today.eventsByHabitId, state.currentDayKey, state.today.captureIds) ? { captureIds: withIds(state.today.eventsByHabitId, state.currentDayKey, state.today.captureIds) } : {}) },
     history: state.history.map((record) => ({ ...record, ...(withIds(record.habitEvents, record.dayKey, record.captureIds) ? { captureIds: withIds(record.habitEvents, record.dayKey, record.captureIds) } : {}) })),
   }
@@ -71,6 +72,8 @@ export function occurrenceDay(block: DominoBlock, assigned: string) {
 export function dayRecord(state: AppState, day: string): DayRecord {
   if (day === state.currentDayKey) return {
     ...createEmptyDayRecord(day),
+    ...(state.today.groupSessions ? { groupSessions: state.today.groupSessions } : {}),
+    ...(state.today.strengthEntries ? { strengthEntries: state.today.strengthEntries } : {}),
     ...(state.today.captureIds ? { captureIds: state.today.captureIds } : {}),
     ...(state.today.recordDetails ? { recordDetails: state.today.recordDetails } : {}),
     ...(state.today.journals ? { journals: state.today.journals } : {}),
@@ -86,6 +89,7 @@ export function putDay(state: AppState, record: DayRecord): AppState {
   const history = [...state.history.filter((day) => day.dayKey !== record.dayKey), record].sort((a, b) => b.dayKey.localeCompare(a.dayKey))
   if (record.dayKey !== state.currentDayKey) return { ...state, history }
   return { ...state, history, today: {
+    ...(record.groupSessions ? { groupSessions: record.groupSessions } : {}), ...(record.strengthEntries ? { strengthEntries: record.strengthEntries } : {}),
     completionTimesByHabitId: record.habits, eventsByHabitId: record.habitEvents, foundationCompletedAt: record.foundation, movementSessions: record.movementSessions,
     ...(record.captureIds ? { captureIds: record.captureIds } : {}), ...(record.recordDetails ? { recordDetails: record.recordDetails } : {}),
     ...(record.journals ? { journals: record.journals } : {}), ...(record.dominoSnapshots ? { dominoSnapshots: record.dominoSnapshots } : {}),
@@ -166,7 +170,7 @@ export function decorateTimeline(events: TodayTimelineEvent[], record: DayRecord
     const info = record.recordDetails?.[event.id]
     return { ...event, assignedDate: record.dayKey, ...(info ? { info } : {}) }
   })
-  for (const entry of record.journals ?? []) decorated.push({ id: `journal-${entry.id}`, timestamp: entry.recordedAt, title: '今日随记', summary: entry.text.length > 16 ? `${entry.text.slice(0, 16)}…` : entry.text, detail: entry.text, kind: 'journal', assignedDate: record.dayKey })
+  for (const entry of record.journals ?? []) decorated.push({ id: `journal-${entry.id}`, timestamp: entry.recordedAt, title: '今日随记', summary: entry.text.length > 16 ? `${entry.text.slice(0, 16)}…` : entry.text, detail: entry.text, kind: 'journal', assignedDate: record.dayKey, info: record.recordDetails?.[`journal-${entry.id}`] })
   return decorated.sort((a, b) => {
     const key = (event: TodayTimelineEvent) => { const info = eventInfo(event); return `${info.occurredDate}T${info.occurredTime ?? '99:99'}` }
     return key(a).localeCompare(key(b)) || a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id)
@@ -182,7 +186,9 @@ export function eventTimeLabel(event: TodayTimelineEvent) {
   if (event.kind === 'journal') return '随记'
   if (!event.info) return `${event.kind === 'rhythm' || event.kind === 'breath' ? '' : '录入 '}${new Date(event.timestamp).toLocaleTimeString('zh-CN', { hour: 'numeric', minute: '2-digit' })}`
   const info = event.info
-  const day = info.occurredDate === shiftDayKey(info.assignedDate, -1) ? '昨晚' : info.occurredDate !== info.assignedDate ? info.occurredDate.slice(5).replace('-', '/') : ''
+  const previous = info.occurredDate === shiftDayKey(info.assignedDate, -1)
+  const nightReview = !event.groupSession || event.groupSession.assignment === 'next-day-review' && info.occurredTime === null
+  const day = previous && nightReview ? '昨晚' : info.occurredDate !== info.assignedDate ? info.occurredDate.slice(5).replace('-', '/') : ''
   return `${day}${day ? ' · ' : ''}${info.occurredTime ? `${info.precision === 'approximate' ? '约 ' : ''}${info.occurredTime}` : '时间未指定'}`
 }
 
@@ -190,13 +196,14 @@ export function eventTimeLabel(event: TodayTimelineEvent) {
 export function editRecord(state: AppState, sourceDay: string, event: TodayTimelineEvent, edit: RecordEdit): AppState {
   if (!validInfo(edit) || edit.assignedDate > state.currentDayKey) return state
   const source = structuredClone(dayRecord(state, sourceDay))
+  if (edit.assignedDate !== sourceDay && source.groupSessions?.some((group) => group.completed.some((item) => item.eventIds.includes(event.id)))) return state
   const target = edit.assignedDate === sourceDay ? source : structuredClone(dayRecord(state, edit.assignedDate))
   let found = false
-  for (const [field, prefix] of [['movementSessions', 'movement-'], ['rhythmEntries', 'rhythm-'], ['breathSessions', 'breath-']] as const) {
-    const index = source[field].findIndex((item) => `${prefix}${item.id}` === event.id)
+  for (const [field, prefix] of [['movementSessions', 'movement-'], ['rhythmEntries', 'rhythm-'], ['breathSessions', 'breath-'], ['strengthEntries', 'exercise-']] as const) {
+    const index = source[field]?.findIndex((item) => `${prefix}${item.id}` === event.id) ?? -1
     if (index < 0) continue
-    if (target !== source && target[field].some((item) => `${prefix}${item.id}` === event.id)) return state
-    const item = source[field][index]
+    if (target !== source && (target[field] ?? []).some((item) => `${prefix}${item.id}` === event.id)) return state
+    const item = source[field]![index]
     if (field === 'movementSessions' && edit.durationMinutes !== undefined) {
       const duration = parseMovementMinutes(edit.durationMinutes)
       if (duration === null) return state
@@ -204,8 +211,8 @@ export function editRecord(state: AppState, sourceDay: string, event: TodayTimel
     }
     if (target !== source) {
       // The arrays have different element types but each pair refers to the same field.
-      const from = source[field] as { id: string }[], to = target[field] as { id: string }[]
-      from.splice(index, 1); to.push(item)
+      const from = source[field] as { id: string }[], to = (target[field] ?? []) as { id: string }[]
+      from.splice(index, 1); to.push(item); Object.assign(target, { [field]: to })
     }
     found = true
   }
@@ -272,7 +279,7 @@ export function validateV31(state: AppState) {
       ids.add(block.id)
     }
   }
-  if (state.version === 5 || state.library.dominoBlocks !== undefined) blocks(state.library.dominoBlocks)
+  if (state.version >= 5 || state.library.dominoBlocks !== undefined) blocks(state.library.dominoBlocks)
   if (state.library.dominoBlocks) {
     const homes = state.library.dominoBlocks.flatMap((block) => block.itemIds)
     if (new Set(homes).size !== homes.length) fail()
@@ -288,7 +295,7 @@ export function validateV31(state: AppState) {
         ...day.movementSessions.map((item) => `movement-${item.id}`), ...day.rhythmEntries.map((item) => `rhythm-${item.id}`), ...day.breathSessions.map((item) => `breath-${item.id}`),
         ...Object.keys(day.habits).filter((id) => day.habits[id]).map((id) => `habit-${id}`), ...Object.keys(day.foundation).filter((id) => (day.foundation as Record<string, string>)[id]).map((id) => `foundation-${id}`),
         ...Object.values(day.captureIds ?? {}).flatMap((ids) => ids ?? []), ...(day.journals ?? []).map((entry) => `journal-${entry.id}`),
-        ...(day.strengthCompletedExerciseIds.length ? ['strength-today'] : []),
+        ...(day.strengthCompletedExerciseIds.length ? ['strength-today'] : []), ...(day.strengthEntries ?? []).map((entry) => `exercise-${entry.id}`),
       ])
       for (const [id, info] of Object.entries(day.recordDetails)) if (!known.has(id) || !info || !validInfo(info) || info.assignedDate !== day.dayKey) fail()
     }

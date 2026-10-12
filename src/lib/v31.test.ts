@@ -63,7 +63,7 @@ describe('versioned migration with real V3 writer protection', () => {
     const raw = data.get(V3_STORAGE_KEY)!
     const loaded = await loadPersistedState(now)
     expect(loaded.canPersist).toBe(true)
-    expect(loaded.state.version).toBe(5)
+    expect(loaded.state.version).toBe(6)
     expect(loaded.state.today).toMatchObject(old.state.today)
     expect(loaded.state.strength).toEqual(old.state.strength)
     expect(loaded.state.rhythm).toEqual(old.state.rhythm)
@@ -77,7 +77,7 @@ describe('versioned migration with real V3 writer protection', () => {
     expect(writes.filter((key) => key === V2_STORAGE_KEY)).toHaveLength(0)
     expect((await loadPersistedState(now)).state.library.dominoBlocks).toEqual(loaded.state.library.dominoBlocks)
   })
-  it('REAL already-open V3 cannot overwrite schema 5 and a fresh old V3 refuses to persist it', async () => {
+  it('REAL already-open V3 cannot overwrite the current schema and a fresh old V3 refuses to persist it', async () => {
     const old = await oldV3.loadPersistedState(now)
     const migrated = await loadPersistedState(now)
     const state = saveJournal(migrated.state, '2026-10-13', '新随记不会被旧版覆盖', now)

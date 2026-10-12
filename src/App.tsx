@@ -1,6 +1,8 @@
-import { dayAsState, eventTimeLabel } from './lib/v31'
+import { GroupList, GroupManager } from './GroupPanels'
+import { findGroupSession, refKey } from './lib/groups'
+import { dayAsState, dayRecord, eventTimeLabel } from './lib/v31'
 import { buildTodayTimeline } from './lib/state'
-import { ActivityTimeline, JournalComposer, DominoHabitPage, DominoManager, HistoryActivityPanel } from './V31Panels'
+import { ActivityTimeline, JournalComposer, DominoHabitPage, HistoryActivityPanel } from './V31Panels'
 import { useState, type ReactNode } from 'react'
 
 import './styles.css'
@@ -118,12 +120,17 @@ function App() {
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null)
 
   const selectedTab = app.state.selectedTab
-  const selectedRoutine =
-    app.strengthRoutines.find((routine) => routine.id === selectedRoutineId) ?? app.strengthRoutines[0]
+  const pending = app.state.pendingGroupLaunch
+  const groupContext = pending ? findGroupSession(app.state, pending.sessionId) : undefined
+  const groupRoutine = groupContext?.session.items.find((item) => refKey(item) === pending?.itemKey && item.kind === 'routine')
+  const selectedRoutine = app.strengthRoutines.find((routine) => routine.id === (groupRoutine?.id ?? selectedRoutineId)) ?? app.strengthRoutines[0]
+  const routineChoices = groupRoutine ? app.strengthRoutines.map((routine) => routine.id !== groupRoutine.id ? routine : { ...routine, exercises: groupRoutine.exercises!.map((snapshot) => ({ ...app.exerciseLibrary.find((exercise) => exercise.id === snapshot.id)!, id: snapshot.id, name: snapshot.name, displaySets: snapshot.sets, displayVolume: snapshot.volume, displayTime: snapshot.duration })) }) : app.strengthRoutines
 
   const habitCompletionCount = completedHabitIds(app.state.today.completionTimesByHabitId, app.state.today.eventsByHabitId).length
   const openManagement = (section: LibrarySection) => { setLibrarySection(section); app.selectTab('library') }
-  const completedExerciseIds = new Set([...app.state.strength.completedExerciseIds, ...Object.keys(app.state.today.foundationCompletedAt)])
+  const completionIds = groupContext?.session.completed.find((entry) => entry.itemKey === pending?.itemKey)?.eventIds ?? []
+  const completedExerciseIds = groupRoutine ? new Set(groupContext?.record.strengthEntries?.filter((entry) => completionIds.includes(`exercise-${entry.id}`)).map((entry) => entry.exercise.id)) : new Set([...app.state.strength.completedExerciseIds, ...Object.keys(app.state.today.foundationCompletedAt), ...(app.state.today.strengthEntries ?? []).map((entry) => entry.exercise.id)])
+  const groupedCoreIds = new Set(app.state.library.groups?.filter((group) => group.location === 'strength').flatMap((group) => group.items.filter((item) => item.kind === 'exercise').map((item) => item.id)))
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -144,7 +151,9 @@ function App() {
       )}
 
       <main className="page-shell">
-        {selectedTab === 'rhythm' && (
+        {groupContext && <div className="group-workflow-banner"><span>{groupContext.session.groupName} · 组合记录</span><button type="button" className="text-button" onClick={() => app.selectTab(app.state.library.groups?.find((group) => group.id === groupContext.session.groupId)?.location ?? 'habit')}>返回组合</button><button type="button" className="text-button" disabled={['running', 'paused'].includes(app.state.rhythm.status) || ['running', 'paused'].includes(app.state.breath.status)} onClick={app.cancelGroupWorkflow}>结束关联</button></div>}
+        {selectedTab === 'rhythm' && (<>
+          <GroupList app={app} location="rhythm" onManage={() => openManagement('blocks')} />
           <RhythmTab
             bpm={RHYTHM_BPM}
             selectedDuration={app.state.rhythm.selectedDurationMinutes}
@@ -158,10 +167,11 @@ function App() {
             onToggleStartPause={app.toggleRhythm}
             onEnd={app.endRhythm}
             onSoundToggle={app.setRhythmSoundEnabled}
-          />
+          /></>
         )}
 
-        {selectedTab === 'breath' && (
+        {selectedTab === 'breath' && (<>
+          <GroupList app={app} location="breath" onManage={() => openManagement('blocks')} />
           <BreathTab
             selectedMode={app.state.breath.selectedMode}
             customPattern={app.state.breath.customPattern}
@@ -181,7 +191,7 @@ function App() {
             onToggleStartPause={app.toggleBreath}
             onEnd={app.endBreath}
             onSoundToggle={app.setBreathSoundEnabled}
-          />
+          /></>
         )}
 
         {selectedTab === 'today' && (
@@ -216,13 +226,15 @@ function App() {
 
         {selectedTab === 'strength' && (
           <StrengthTab
-            routines={app.strengthRoutines}
+            groupsPanel={<GroupList app={app} location="strength" onManage={() => openManagement('blocks')} />}
+            groupedCoreIds={groupedCoreIds} groupWorkflow={Boolean(groupRoutine)}
+            routines={routineChoices}
             selectedRoutineId={selectedRoutine?.id ?? ''}
             completedExerciseIds={completedExerciseIds}
             exercises={app.exerciseLibrary}
             onManage={() => openManagement('routines')}
             onEditExercise={(exercise) => { setExerciseDraft({ ...exercise, routineIds: app.strengthRoutineLibrary.filter((routine) => routine.exercises.some((item) => item.exerciseId === exercise.id)).map((routine) => routine.id) }); openManagement('exercises') }}
-            onSelectRoutine={setSelectedRoutineId}
+            onSelectRoutine={(id) => { app.cancelGroupWorkflow(); setSelectedRoutineId(id) }}
             onToggleExercise={app.toggleStrengthExercise}
           />
         )}
@@ -230,7 +242,7 @@ function App() {
         {selectedTab === 'library' && (
           <LibraryTab
             section={librarySection}
-            blocksPanel={<DominoManager app={app} onAddHabit={() => { setHabitDraft(EMPTY_HABIT_DRAFT); openManagement('habits') }} />}
+            blocksPanel={<GroupManager app={app} onAddHabit={() => { setHabitDraft(EMPTY_HABIT_DRAFT); openManagement('habits') }} onAddExercise={() => { setExerciseDraft(EMPTY_EXERCISE_DRAFT); openManagement('exercises') }} />}
             dataPanel={
               <DataBackupSection state={app.state} canPersist={app.canPersist} canRecover={app.canRecover} session={app.persistenceSession} onReplace={app.replaceAppState} />
             }
@@ -676,7 +688,7 @@ function TodayTab(props: TodayTabProps) {
     </Card>
     <Card className="card-compact"><SectionHeader title="今日时间线" />
       <JournalComposer day={props.app.state.currentDayKey} onSave={props.app.saveDailyJournal} />
-      {props.timelineEvents.length === 0 ? <EmptyState text="今天还没有记录。" /> : <ActivityTimeline events={props.timelineEvents} day={props.app.state.currentDayKey} onEdit={props.app.editTimelineRecord} />}
+      {props.timelineEvents.length === 0 ? <EmptyState text="今天还没有记录。" /> : <ActivityTimeline events={props.timelineEvents} day={props.app.state.currentDayKey} onEdit={props.app.editTimelineRecord} app={props.app} />}
 
     </Card>
   </div>
@@ -744,9 +756,9 @@ function HistoryTab(props: HistoryTabProps) {
             // Remount per day so an open editor never carries over to another date.
             key={props.selectedDayKey}
             dayKey={props.selectedDayKey}
-            sessions={day.movementSessions}
+            sessions={day.movementSessions.filter((entry) => !dayRecord(props.app.state, props.selectedDayKey).groupSessions?.some((group) => group.completed.some((item) => item.eventIds.includes(`movement-${entry.id}`))))}
             timeLabels={Object.fromEntries(buildTodayTimeline(dayAsState(props.app.state, props.selectedDayKey), props.habits, []).filter((event) => event.kind === 'movement').map((event) => [event.id.replace('movement-', ''), eventTimeLabel(event)]))}
-            labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
+            labels={Object.fromEntries([...props.habits.map((habit) => [habit.id, habit.name]), ...props.habits.map((habit) => ['habit:' + habit.id, habit.name]), ...props.exercises.map((exercise) => ['exercise:' + exercise.id, exercise.name]), ...props.app.strengthRoutineLibrary.map((routine) => ['routine:' + routine.id, routine.name]), ['rhythm:rhythm', '节律'], ['breath:breath', '呼吸']])}
             emptyText="这一天没有运动记录。"
             onUpdate={props.onUpdateMovement}
             onDelete={props.onDeleteMovement}
@@ -780,12 +792,12 @@ function HistoryTab(props: HistoryTabProps) {
         </div>
       </Card>
 
-      <HistoryActivityPanel state={props.app.state} day={props.selectedDayKey} onEdit={props.app.editTimelineRecord} />
+      <HistoryActivityPanel app={props.app} state={props.app.state} day={props.selectedDayKey} onEdit={props.app.editTimelineRecord} />
       <div className="two-column-cards">
         <PeriodSummaryCard
           kind="week"
           summary={props.weekSummary}
-          labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
+          labels={Object.fromEntries([...props.habits.map((habit) => [habit.id, habit.name]), ...props.habits.map((habit) => ['habit:' + habit.id, habit.name]), ...props.exercises.map((exercise) => ['exercise:' + exercise.id, exercise.name]), ...props.app.strengthRoutineLibrary.map((routine) => ['routine:' + routine.id, routine.name]), ['rhythm:rhythm', '节律'], ['breath:breath', '呼吸']])}
           navigation={props.navigation.week}
           onStep={(delta) => props.onStepPeriod('week', delta)}
           onReset={() => props.onResetPeriod('week')}
@@ -793,7 +805,7 @@ function HistoryTab(props: HistoryTabProps) {
         <PeriodSummaryCard
           kind="month"
           summary={props.monthSummary}
-          labels={Object.fromEntries(props.habits.map((habit) => [habit.id, habit.name]))}
+          labels={Object.fromEntries([...props.habits.map((habit) => [habit.id, habit.name]), ...props.habits.map((habit) => ['habit:' + habit.id, habit.name]), ...props.exercises.map((exercise) => ['exercise:' + exercise.id, exercise.name]), ...props.app.strengthRoutineLibrary.map((routine) => ['routine:' + routine.id, routine.name]), ['rhythm:rhythm', '节律'], ['breath:breath', '呼吸']])}
           navigation={props.navigation.month}
           onStep={(delta) => props.onStepPeriod('month', delta)}
           onReset={() => props.onResetPeriod('month')}
@@ -1196,6 +1208,8 @@ function PeriodSummaryCard({
       </div>
 
       <div className="activity-log">
+        <div className="activity-log-label">组合与项目次数</div>
+        <div className="metric-list">{summary.groups.map((group) => <HistoryMetric key={group.id} label={group.name} value={`${group.sessions} 次 · ${group.completedItems} 项完成`} />)}</div><details className="group-item-frequencies"><summary>查看项目次数</summary><div className="metric-list">{summary.items.map((item) => <HistoryMetric key={item.key} label={labels[item.key] ?? item.key.slice(item.key.indexOf(':') + 1)} value={`${item.count} 次`} />)}</div></details>
         <div className="activity-log-label">节律与习惯</div>
         <div className="metric-list">
           <HistoryMetric label="习惯完成" value={`${summary.habitCompletionsCount} 项次`} />
@@ -1214,6 +1228,9 @@ function PeriodSummaryCard({
 }
 
 interface StrengthTabProps {
+  groupsPanel: ReactNode
+  groupedCoreIds: Set<string>
+  groupWorkflow: boolean
   routines: ResolvedStrengthRoutine[]
   selectedRoutineId: string
   completedExerciseIds: Set<string>
@@ -1227,8 +1244,8 @@ function StrengthTab(props: StrengthTabProps) {
   const [temporaryIds, setTemporaryIds] = useState<string[]>([])
   const [adding, setAdding] = useState(false)
   const selected = props.routines.find((routine) => routine.id === props.selectedRoutineId) ?? props.routines[0]
-  const core = coreExercises(props.exercises)
-  const temporary = props.exercises.filter((exercise) => temporaryIds.includes(exercise.id) && !selected?.exercises.some((item) => item.id === exercise.id))
+  const core = coreExercises(props.exercises).filter((exercise) => !props.groupedCoreIds.has(exercise.id))
+  const temporary = props.groupWorkflow ? [] : props.exercises.filter((exercise) => temporaryIds.includes(exercise.id) && !selected?.exercises.some((item) => item.id === exercise.id))
   const routineExercises = Array.from(new Map([...(selected?.exercises ?? []), ...temporary].map((exercise) => [exercise.id, exercise])).values())
   const tiles = (exercises: (ExerciseDefinition | import('./lib/domain').ResolvedRoutineExercise)[]) => <div className="exercise-grid">
     {exercises.map((exercise) => <div key={exercise.id} className="strength-item">
@@ -1243,12 +1260,13 @@ function StrengthTab(props: StrengthTabProps) {
     </div>)}
   </div>
   return <div className="page-grid">
-    <Card className="card-compact"><SectionHeader title="每日核心训练" subtitle={`${core.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length}/${core.length} 项`} />{core.length ? tiles(core) : <EmptyState text="在管理中选择核心动作。" />}</Card>
+    {props.groupsPanel}
+    {!props.groupWorkflow && <Card className="card-compact"><SectionHeader title="每日核心训练" subtitle={`${core.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length}/${core.length} 项`} />{core.length ? tiles(core) : <EmptyState text="在管理中选择核心动作。" />}</Card>}
     <Card className="card-compact"><div className="compact-toolbar"><h2>训练组合</h2><button type="button" className="secondary-button" onClick={props.onManage}>管理组合</button></div>
       <div className="chip-row">{props.routines.map((routine) => <button key={routine.id} type="button" className={`chip${selected?.id === routine.id ? ' is-active' : ''}`} onClick={() => { props.onSelectRoutine(routine.id); setTemporaryIds([]) }}>{routine.name}</button>)}</div>
       {selected && <p className="activity-log-label">{routineExercises.filter((exercise) => props.completedExerciseIds.has(exercise.id)).length}/{routineExercises.length} 项</p>}
       {tiles(routineExercises)}
-      <button type="button" className="secondary-button temporary-add" onClick={() => setAdding(!adding)}>＋ 临时加练</button>
+      <button type="button" disabled={props.groupWorkflow} className="secondary-button temporary-add" onClick={() => setAdding(!adding)}>＋ 临时加练</button>
       {adding && <select aria-label="临时加练动作" value="" onChange={(event) => { if (event.target.value) { setTemporaryIds([...temporaryIds, event.target.value]); setAdding(false) } }}><option value="">选择动作</option>{props.exercises.filter((exercise) => exercise.enabled && !routineExercises.some((item) => item.id === exercise.id)).map((exercise) => <option key={exercise.id} value={exercise.id}>{exercise.name}{exercise.trying ? ' · 尝试中' : ''}</option>)}</select>}
     </Card>
   </div>
@@ -1326,11 +1344,12 @@ function LibraryTab(props: LibraryTabProps) {
           >
             数据与备份
           </button>
-          <button type="button" className={`chip${props.section === 'blocks' ? ' is-active' : ''}`} onClick={() => props.onSelectSection('blocks')}>管理模块</button>
+          <button type="button" className={`chip${props.section === 'blocks' ? ' is-active' : ''}`} onClick={() => props.onSelectSection('blocks')}>管理组合</button>
         </div>
       </Card>
 
-      {props.section === 'blocks' ? props.blocksPanel : props.section === 'data' ? (
+      <div hidden={props.section !== 'blocks'}>{props.blocksPanel}</div>
+      {props.section === 'blocks' ? null : props.section === 'data' ? (
         props.dataPanel
       ) : props.section === 'habits' ? (
         <>

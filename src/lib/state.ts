@@ -1,3 +1,4 @@
+import { seedGroups, recordGroupForDay, saveGroup, moveGroup, newGroupSession, logGroupItem, editGroupSession, launchGroupItem, attachTimedGroupRecord, aggregateGroupTimeline, groupStatistics, itemStatistics, type GroupTemplate } from './groups'
 import { seedV31, validateV31, decorateTimeline, dayRecord, putDay, logDomino, saveBlock, moveBlock, saveJournal, editRecord, type DominoBlock, type RecordEdit } from './v31'
 import { normalizeHabit, translateBuiltIn, habitMode, moveHabit, completedHabitIds, HABIT_GROUPS, FREQUENCY_LABELS, MODE_LABELS } from './v3'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -74,7 +75,7 @@ import { PersistenceSession, RECOVERY_NOTICE } from './persistence'
 import { assertUsableState } from './dataTransfer'
 
 type LegacyAppState = Omit<AppState, 'version' | 'library' | 'selectedTab' | 'strength'> & {
-  version?: 1 | 2 | 3 | 4
+  version?: 1 | 2 | 3 | 4 | 5
   selectedTab?: Exclude<TabKey, 'library'>
   strength: {
     completedExerciseIds: string[]
@@ -116,6 +117,14 @@ export interface MovementDefaults {
 }
 
 interface AppActions {
+  recordGroupItem: (groupId: string, day: string, sessionId: string | null, key: string, movement?: MovementSessionDraft, undo?: boolean) => void
+  saveGroupTemplate: (group: GroupTemplate) => void
+  moveGroupTemplate: (id: string, delta: -1 | 1) => void
+  startGroupSession: (groupId: string, day: string) => void
+  completeGroupItem: (sessionId: string, key: string, movement?: MovementSessionDraft, undo?: boolean, exerciseId?: string) => void
+  editGroupRecord: (sessionId: string, info: import('./v31').RecordInfo) => boolean
+  launchGroupWorkflow: (sessionId: string, key: string) => void
+  cancelGroupWorkflow: () => void
   moveLooseHabit: (id: string, delta: -1 | 1) => void
   logBlockItem: (id: string, assigned: string, blockId?: string, movement?: MovementSessionDraft) => void
   saveDominoBlock: (block: DominoBlock) => void
@@ -294,11 +303,22 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   }
 
   const actions: AppActions = {
+    recordGroupItem(groupId, day, sessionId, key, movement, undo) {
+      if (!allowRecording()) return
+      setState((current) => recordGroupForDay(ensureCurrentDay(current, new Date()), groupId, day, sessionId, key, new Date(), movement, undo))
+    },
+    saveGroupTemplate(group) { if (!allowRecording()) return; setState((current) => saveGroup(current, group)) },
+    moveGroupTemplate(id, delta) { if (!allowRecording()) return; setState((current) => moveGroup(current, id, delta)) },
+    startGroupSession(id, day) { if (!allowRecording()) return; setState((current) => newGroupSession(ensureCurrentDay(current, new Date()), id, day, new Date())) },
+    completeGroupItem(id, key, movement, undo, exerciseId) { if (!allowRecording()) return; setState((current) => logGroupItem(ensureCurrentDay(current, new Date()), id, key, new Date(), movement, undo, exerciseId)) },
+    editGroupRecord(id, info) { if (!allowRecording() || editGroupSession(state, id, info) === state) return false; setState((current) => editGroupSession(current, id, info)); return true },
+    launchGroupWorkflow(id, key) { if (!allowRecording()) return; setState((current) => launchGroupItem(current, id, key)) },
+    cancelGroupWorkflow() { if (!allowRecording()) return; setState((current) => ({ ...current, pendingGroupLaunch: undefined })) },
     moveLooseHabit(id, delta) {
       if (!allowRecording()) return
       setState((current) => {
         const all = [...current.library.habits]
-        const ids = new Set(current.library.dominoBlocks?.flatMap((block) => block.itemIds))
+        const ids = new Set(current.library.groups?.flatMap((group) => group.items.filter((item) => item.kind === 'habit').map((item) => item.id)))
         const habit = all.find((item) => item.id === id)
         if (!habit) return current
         const items = all.filter((item) => !ids.has(item.id) && (habitMode(item) === 'duration') === (habitMode(habit) === 'duration'))
@@ -665,8 +685,8 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
         0,
       ),
       breathTotalSessionsToday: state.breath.entriesToday.length,
-      strengthCompletedCountToday: new Set([...state.strength.completedExerciseIds, ...Object.keys(state.today.foundationCompletedAt)]).size,
-      strengthSummaryToday: `${new Set([...state.strength.completedExerciseIds, ...Object.keys(state.today.foundationCompletedAt)]).size} 项`,
+      strengthCompletedCountToday: new Set([...state.strength.completedExerciseIds, ...Object.keys(state.today.foundationCompletedAt), ...(state.today.strengthEntries ?? []).map((entry) => entry.exercise.id)]).size,
+      strengthSummaryToday: `${new Set([...state.strength.completedExerciseIds, ...Object.keys(state.today.foundationCompletedAt), ...(state.today.strengthEntries ?? []).map((entry) => entry.exercise.id)]).size} 项`,
       todayTimeline: buildTodayTimeline(state, visibleTodayHabits, strengthRoutines),
       earliestDayKey,
       historyNavigation,
@@ -760,13 +780,13 @@ export async function loadPersistedState(now: Date, session = new PersistenceSes
       try {
         const parsed: unknown = JSON.parse(raw)
         const version = (parsed as { version?: unknown } | null)?.version
-        if (typeof version === 'number' && version > 5) {
+        if (typeof version === 'number' && version > 6) {
           session.block('此存档来自更新版本，已暂停写入。请使用对应版本打开。')
           return
         }
-        if (![undefined, 1, 2, 3, 4, 5].includes(version as number | undefined)) throw new Error('Unsupported schema')
-        if (canonical !== null && version !== 4 && version !== 5) throw new Error('Invalid canonical schema')
-        if (version === 5) assertCanonicalState(parsed)
+        if (![undefined, 1, 2, 3, 4, 5, 6].includes(version as number | undefined)) throw new Error('Unsupported schema')
+        if (canonical !== null && ![4, 5, 6].includes(version as number)) throw new Error('Invalid canonical schema')
+        if (version === 6) assertCanonicalState(parsed)
         state = restoreStoredState(parsed, now)
         assertUsableState(state)
       } catch {
@@ -775,7 +795,7 @@ export async function loadPersistedState(now: Date, session = new PersistenceSes
         session.block(RECOVERY_NOTICE, protectedRaw)
         return
       }
-      if (canonical === null || (JSON.parse(raw) as {version?: number}).version !== 5) {
+      if (canonical === null || (JSON.parse(raw) as {version?: number}).version !== 6) {
         // Even schema 4 stranded under V2 needs an independent verified original copy.
         const key = writeBackup(raw, 'before-migration', now)
         if (key === null || readBackup(key) !== raw) {
@@ -796,7 +816,7 @@ function freshState(now: Date) {
 }
 
 export function assertCanonicalState(value: unknown) {
-  if ((value as { version?: unknown } | null)?.version !== 5) throw new Error('Expected schema 5')
+  if ((value as { version?: unknown } | null)?.version !== 6) throw new Error('Expected schema 6')
   assertStoredStateShape(value)
   assertUsableState(value as AppState)
 }
@@ -808,8 +828,8 @@ export function assertCanonicalState(value: unknown) {
 export function restoreStoredState(value: unknown, now: Date): AppState {
   assertStoredStateShape(value)
   if (((value as {version?: number}).version ?? 0) >= 4) validateV31(value as AppState)
-  if ((value as {version?: number}).version === 5) assertUsableState(value as AppState)
-  const migrated = seedV31(migrateState(value, now))
+  if (((value as {version?: number}).version ?? 0) >= 5) assertUsableState(value as AppState)
+  const migrated = seedGroups(seedV31(migrateState(value, now)))
   // Validate before day synchronization can replace a malformed current history row.
   assertUsableState(migrated)
   return syncHistory(ensureCurrentDay(migrated, now))
@@ -881,7 +901,7 @@ function assertStoredStateShape(value: unknown): asserts value is AppState | Leg
     }
   }
 
-  if (value.version === 3 || value.version === 4 || value.version === 5) {
+  if (value.version === 3 || value.version === 4 || value.version === 5 || value.version === 6) {
     if (!isRecord(library) || !Array.isArray(library.habits) || !Array.isArray(library.exercises)) {
       return fail('library')
     }
@@ -894,7 +914,7 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
     const state = rawState as AppState
     return {
       ...state,
-      version: 5,
+      version: 6,
       today: normalizeTodayState(state.today),
       history: (state.history ?? []).map(normalizeDayRecord),
       strength: {
@@ -911,7 +931,7 @@ function migrateState(rawState: AppState | LegacyAppState, now: Date): AppState 
 
   const legacy = rawState as LegacyAppState
   return syncHistory({
-    version: 5,
+    version: 6,
     currentDayKey: legacy.currentDayKey ?? toDayKey(now),
     selectedTab: legacy.selectedTab ?? 'rhythm',
     rhythm: legacy.rhythm,
@@ -1155,7 +1175,9 @@ function finalizeRhythmState(
   let entriesToday = state.rhythm.entriesToday
 
   if (shouldRecord && state.rhythm.sessionStartAt) {
-    entriesToday = appendRhythmEntry(entriesToday, {
+    const isolated = state.pendingGroupLaunch?.itemKey === 'rhythm:rhythm' || dayRecord(state, state.currentDayKey).groupSessions?.some((group) => group.completed.some((item) => item.eventIds.includes(`rhythm-${entriesToday.at(-1)?.id}`)))
+    const append = isolated ? (entries: RhythmEntry[], entry: RhythmEntry) => [...entries, entry] : appendRhythmEntry
+    entriesToday = append(entriesToday, {
       id: state.rhythm.sessionStartAt,
       startAt: state.rhythm.sessionStartAt,
       endAt: endTime.toISOString(),
@@ -1448,6 +1470,8 @@ function syncHistory(state: AppState): AppState {
   currentRecord.habitEvents = state.today.eventsByHabitId
   currentRecord.foundation = state.today.foundationCompletedAt
   currentRecord.movementSessions = state.today.movementSessions
+  if (state.today.groupSessions) currentRecord.groupSessions = state.today.groupSessions
+  if (state.today.strengthEntries) currentRecord.strengthEntries = state.today.strengthEntries
   if (state.today.captureIds) currentRecord.captureIds = state.today.captureIds
   if (state.today.recordDetails) currentRecord.recordDetails = state.today.recordDetails
   if (state.today.journals) currentRecord.journals = state.today.journals
@@ -1524,6 +1548,9 @@ export function updateMovementSessionState(
   if (!fields) {
     return state
   }
+  const record = dayRecord(state, dayKey)
+  const owned = record.groupSessions?.some((group) => group.completed.some((item) => item.eventIds.includes(`movement-${sessionId}`)))
+  if (owned && record.movementSessions.find((entry) => entry.id === sessionId)?.typeId !== fields.typeId) return state
 
   return mapMovementSessionsForDay(state, dayKey, (sessions) =>
     sessions.map((session) => {
@@ -1556,7 +1583,9 @@ function mapMovementSessionsForDay(
     if (!next) delete recordDetails[key]
     else if (recordDetails[key]) recordDetails[key] = { ...recordDetails[key], note: next.note ?? '' }
   }
-  return syncHistory(putDay(state, { ...record, movementSessions, ...(recordDetails ? { recordDetails } : {}) }))
+  const removed = new Set(record.movementSessions.filter((entry) => !movementSessions.some((next) => next.id === entry.id)).map((entry) => `movement-${entry.id}`))
+  const groupSessions = record.groupSessions?.map((group) => ({ ...group, completed: group.completed.map((item) => ({ ...item, eventIds: item.eventIds.filter((id) => !removed.has(id)) })).filter((item) => item.eventIds.length) }))
+  return syncHistory(putDay(state, { ...record, movementSessions, ...(groupSessions ? { groupSessions } : {}), ...(recordDetails ? { recordDetails } : {}) }))
 }
 
 /** Pre-fill for the quick log: the most recent session of this type, else the type's default. */
@@ -1673,7 +1702,7 @@ export function buildTodayTimeline(
     }),
   ]
 
-  return decorateTimeline(events, dayRecord(state, state.currentDayKey))
+  return aggregateGroupTimeline(decorateTimeline(events, dayRecord(state, state.currentDayKey)), dayRecord(state, state.currentDayKey))
 }
 
 function movementDetail(session: MovementSession) {
@@ -1704,6 +1733,7 @@ function buildStrengthDetail(completedExerciseIds: string[], routines: ResolvedS
 }
 
 export function toggleStrengthExerciseState(state: AppState, exerciseId: string, now: Date): AppState {
+  if (state.pendingGroupLaunch?.itemKey.startsWith('routine:')) return logGroupItem(state, state.pendingGroupLaunch.sessionId, state.pendingGroupLaunch.itemKey, now, undefined, false, exerciseId)
   const exercise = state.library.exercises.find((item) => item.id === exerciseId)
   if (exercise?.foundationId) return toggleFoundationItemState(state, exercise.foundationId, now)
   const ids = new Set(state.strength.completedExerciseIds)
@@ -1719,7 +1749,7 @@ export function buildDailyHistorySummary(record: DayRecord, routines: ResolvedSt
   const foundation = FOUNDATION_ITEMS.map((item) => ({
     id: item.id,
     label: item.label,
-    completedAt: record.foundation[item.id] ?? null,
+    completedAt: record.foundation[item.id] ?? record.strengthEntries?.find((entry) => entry.exercise.id === item.id)?.recordedAt ?? null,
   }))
   const movementSessions = [...record.movementSessions].sort((left, right) =>
     left.loggedAt < right.loggedAt ? -1 : left.loggedAt > right.loggedAt ? 1 : 0,
@@ -1727,12 +1757,12 @@ export function buildDailyHistorySummary(record: DayRecord, routines: ResolvedSt
 
   return {
     habitRecords: Array.from(new Set([...Object.keys(record.habits), ...Object.keys(record.habitEvents)])).map((id) => ({ id, completed: Boolean(record.habits[id]), captures: record.habitEvents[id]?.length ?? 0 })),
-    strengthExerciseIds: [...new Set([...record.strengthCompletedExerciseIds, ...Object.keys(record.foundation)])],
+    strengthExerciseIds: [...new Set([...record.strengthCompletedExerciseIds, ...Object.keys(record.foundation), ...(record.strengthEntries ?? []).map((entry) => entry.exercise.id)])],
     rhythmTotalMinutes: totalRhythmMinutes(record.rhythmEntries),
     rhythmEntriesCount: record.rhythmEntries.length,
     breathSessionsCount: record.breathSessions.length,
     breathRoundsCount: record.breathSessions.reduce((total, session) => total + session.completedRounds, 0),
-    strengthSummary: `${new Set([...record.strengthCompletedExerciseIds, ...Object.keys(record.foundation)]).size} 项`,
+    strengthSummary: `${new Set([...record.strengthCompletedExerciseIds, ...Object.keys(record.foundation), ...(record.strengthEntries ?? []).map((entry) => entry.exercise.id)]).size} 项`,
     mindfulEatingCompleted: isHabitDoneOn(record, BUILT_IN_HABIT_IDS.mindfulEating),
     mindfulEatingCaptureCount: record.habitEvents[BUILT_IN_HABIT_IDS.mindfulEating]?.length ?? 0,
     earlySleepCompleted: isHabitDoneOn(record, BUILT_IN_HABIT_IDS.earlySleep),
@@ -1750,7 +1780,7 @@ function isHabitDoneOn(record: DayRecord, habitId: HabitId) {
 }
 
 function foundationCountForRecord(record: DayRecord) {
-  return FOUNDATION_ITEMS.filter((item) => Boolean(record.foundation[item.id])).length
+  return FOUNDATION_ITEMS.filter((item) => Boolean(record.foundation[item.id]) || (record.strengthEntries ?? []).some((entry) => entry.exercise.id === item.id)).length
 }
 
 const HISTORY_PERIOD_KINDS: HistoryPeriodKind[] = ['day', 'week', 'month']
@@ -1840,19 +1870,20 @@ export function buildHistorySummary(
   })
 
   return {
+    groups: groupStatistics(matchingRecords), items: itemStatistics(matchingRecords),
     habitCompletionsCount: matchingRecords.reduce((sum, record) => sum + completedHabitIds(record.habits, record.habitEvents).length, 0),
     habitCapturesCount: matchingRecords.reduce((sum, record) => sum + Object.values(record.habitEvents).reduce((total, captures) => total + (captures?.length ?? 0), 0), 0),
-    strengthCompletionsCount: matchingRecords.reduce((sum, record) => sum + new Set([...record.strengthCompletedExerciseIds, ...Object.keys(record.foundation)]).size, 0),
+    strengthCompletionsCount: matchingRecords.reduce((sum, record) => sum + new Set([...record.strengthCompletedExerciseIds, ...Object.keys(record.foundation)]).size + (record.strengthEntries?.length ?? 0), 0),
     breathSessionsCount: matchingRecords.reduce((sum, record) => sum + record.breathSessions.length, 0),
     totalRhythmMinutes: totalRhythmMinutes(matchingRecords.flatMap((record) => record.rhythmEntries)),
     rhythmDaysCount: matchingRecords.filter((record) => record.rhythmEntries.length > 0).length,
-    strengthDaysCount: matchingRecords.filter((record) => (record.strengthCompletedExerciseIds.length > 0 || Object.values(record.foundation).some(Boolean))).length,
+    strengthDaysCount: matchingRecords.filter((record) => (record.strengthCompletedExerciseIds.length > 0 || (record.strengthEntries?.length ?? 0) > 0 || Object.values(record.foundation).some(Boolean))).length,
     mindfulEatingDaysCount: matchingRecords.filter((record) => isHabitDoneOn(record, BUILT_IN_HABIT_IDS.mindfulEating)).length,
     earlySleepDaysCount: matchingRecords.filter((record) => isHabitDoneOn(record, BUILT_IN_HABIT_IDS.earlySleep)).length,
     foundationDaysById: Object.fromEntries(
       FOUNDATION_ITEMS.map((item) => [
         item.id,
-        matchingRecords.filter((record) => Boolean(record.foundation[item.id])).length,
+        matchingRecords.filter((record) => Boolean(record.foundation[item.id]) || (record.strengthEntries ?? []).some((entry) => entry.exercise.id === item.id)).length,
       ]),
     ) as Record<FoundationItemId, number>,
     elapsedDaysCount,
@@ -1996,8 +2027,10 @@ function annotateTimedRecord(state: AppState, kind: 'rhythm' | 'breath', entry: 
   const key = kind + '-' + entry.id
   if (state.today.recordDetails?.[key]) return state
   const start = new Date(entry.startAt)
+  const recordedAt = new Date().toISOString()
+  if (state.pendingGroupLaunch?.itemKey === `${kind}:${kind}`) return attachTimedGroupRecord(state, kind, key, recordedAt)
   return { ...state, today: { ...state.today, recordDetails: { ...state.today.recordDetails, [key]: {
     occurredDate: toDayKey(start), occurredTime: String(start.getHours()).padStart(2, '0') + ':' + String(start.getMinutes()).padStart(2, '0'),
-    precision: 'exact', assignedDate: state.currentDayKey, recordedAt: new Date().toISOString(),
+    precision: 'exact', assignedDate: state.currentDayKey, recordedAt,
   } } } }
 }

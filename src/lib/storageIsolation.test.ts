@@ -96,7 +96,7 @@ describe('canonical V3 isolation and verified first-run migration', () => {
     const raw = seedV2()
     const loaded = await loadPersistedState(now)
     expect(loaded.canPersist).toBe(true)
-    expect(canonical().version).toBe(5)
+    expect(canonical().version).toBe(6)
     expect(data.get(V2_STORAGE_KEY)).toBe(raw)
     expect(writes).not.toContain(V2_STORAGE_KEY)
     expect(loaded.state.today).toMatchObject(v2Fixture.today)
@@ -148,7 +148,7 @@ describe('canonical V3 isolation and verified first-run migration', () => {
   })
   it('initializes new users in V3 without creating V2', async () => {
     expect((await loadPersistedState(now)).canPersist).toBe(true)
-    expect(canonical().version).toBe(5)
+    expect(canonical().version).toBe(6)
     expect(data.has(V2_STORAGE_KEY)).toBe(false)
     expect(listBackups()).toHaveLength(0)
   })

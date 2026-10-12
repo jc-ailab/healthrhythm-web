@@ -12,7 +12,7 @@ describe('compact Chinese V3.1 components', () => {
     const saved = state()
     const app = { state: saved, habitLibrary: saved.library.habits, canPersist: true } as unknown as HealthRhythmViewModel
     const html = renderToStaticMarkup(createElement(DominoHabitPage, { app, onManage: vi.fn(), onManageBlocks: vi.fn() }))
-    for (const name of ['晨间多米诺', '睡前多米诺', '虔信时刻', '晨习', '无压', '日常习惯', '其他运动', '管理模块']) expect(html).toContain(name)
+    for (const name of ['晨间多米诺', '睡前多米诺', '虔信时刻', '晨习', '无压', '日常习惯', '其他运动', '管理组合']) expect(html).toContain(name)
     expect(html.match(/金刚功/g)).toHaveLength(1)
     expect(html).not.toContain('<form')
   })

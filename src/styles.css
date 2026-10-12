@@ -1545,3 +1545,16 @@ input, select, textarea { max-width: 100%; }
 .event-row-summary .event-summary { max-width: 100px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .event-row-summary .event-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .event-detail { overflow-wrap: anywhere; }
+
+/* Shared groups reuse compact habit rows, timeline details and Library forms. */
+.group-workflow-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; font-size: .85rem; }
+.group-workflow-banner > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.group-record-items p, .group-prescription { margin: 4px 0; }
+.group-record-editor { min-width: 0; }
+.domino-block > summary { min-height: 44px; box-sizing: border-box; }
+.block-review > details > summary { min-height: 36px; display: flex; align-items: center; }
+.block-review select, .domino-block select { min-width: 0; max-width: 100%; }
+
+.block-management-row button { min-height: 44px; }
+.block-management-row > button:not(:first-child) { min-width: 44px; }
+.domino-block > .compact-toolbar .text-button { min-height: 44px; }

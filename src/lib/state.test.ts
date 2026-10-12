@@ -167,7 +167,7 @@ describe('loadPersistedState', () => {
     const result = await loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
-    expect(result.state.version).toBe(5)
+    expect(result.state.version).toBe(6)
     expect(result.state.library.habits.length).toBeGreaterThan(0)
     expect(backupKeys()).toHaveLength(1)
     expect(storage.data.get(backupKeys()[0])).toBe(JSON.stringify(saved))
@@ -182,7 +182,7 @@ describe('loadPersistedState', () => {
     const result = await loadPersistedState(at(10))
 
     expect(result.notice).toBeNull()
-    expect(result.state.version).toBe(5)
+    expect(result.state.version).toBe(6)
   })
 
   describe.each([
@@ -206,7 +206,7 @@ describe('loadPersistedState', () => {
       const result = await loadPersistedState(at(10))
 
       expect(result.notice).toBeNull()
-      expect(result.state.version).toBe(5)
+      expect(result.state.version).toBe(6)
       expect(result.state.today.eventsByHabitId).toEqual({})
       expect(result.state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })
     })
