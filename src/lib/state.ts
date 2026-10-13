@@ -203,11 +203,7 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
   const canPersist = useSyncExternalStore(session.subscribe, session.getCanPersist)
   const canRecover = useSyncExternalStore(session.subscribe, session.getCanRecover)
   // History selections are view state only; they are never persisted.
-  const [selectedHistoryKeys, setSelectedHistoryKeys] = useState<Record<HistoryPeriodKind, string>>(() => ({
-    day: state.currentDayKey,
-    week: periodKeyFor('week', state.currentDayKey),
-    month: periodKeyFor('month', state.currentDayKey),
-  }))
+  const [selectedHistoryKeys, setSelectedHistoryKeys] = useState(() => historyKeysForDay(state.currentDayKey))
   const storageNotice = useSyncExternalStore(subscribeStorageNotice, getStorageNotice)
   const metronomeRef = useRef(new WebMetronome())
   const breathCuePlayerRef = useRef(new BreathCuePlayer())
@@ -703,18 +699,20 @@ export function useHealthRhythmApp(): HealthRhythmViewModel {
     setSelectedHistoryDayKey: (dayKey) => {
       // The iOS date picker's Clear button reports ''; keep the current day instead.
       if (dayKey) {
-        setSelectedHistoryKeys((current) => ({ ...current, day: dayKey }))
+        setSelectedHistoryKeys(historyKeysForDay(getPeriodNavigation('day', dayKey, earliestDayKey, state.currentDayKey).key))
       }
     },
     historyNavigation,
     stepHistoryPeriod: (kind, delta) =>
-      setSelectedHistoryKeys((current) => ({
-        ...current,
+      setSelectedHistoryKeys((current) => {
         // From the latest selection, so taps landing before a re-render each count.
-        [kind]: stepPeriodKey(kind, current[kind], delta, earliestDayKey, state.currentDayKey),
-      })),
+        const key = stepPeriodKey(kind, current[kind], delta, earliestDayKey, state.currentDayKey)
+        return kind === 'day' ? historyKeysForDay(key) : { ...current, [kind]: key }
+      }),
     resetHistoryPeriod: (kind) =>
-      setSelectedHistoryKeys((current) => ({ ...current, [kind]: periodKeyFor(kind, state.currentDayKey) })),
+      setSelectedHistoryKeys((current) => kind === 'day'
+        ? historyKeysForDay(state.currentDayKey)
+        : { ...current, [kind]: periodKeyFor(kind, state.currentDayKey) }),
     canPersist: loaded && canPersist,
     canRecover: loaded && canRecover,
     persistenceSession: session,
@@ -1784,6 +1782,12 @@ function foundationCountForRecord(record: DayRecord) {
 }
 
 const HISTORY_PERIOD_KINDS: HistoryPeriodKind[] = ['day', 'week', 'month']
+
+// A day review anchors the summaries to that assigned calendar date. Week/month
+// arrows remain independently browsable until the user chooses another day.
+function historyKeysForDay(dayKey: string): Record<HistoryPeriodKind, string> {
+  return { day: dayKey, week: periodKeyFor('week', dayKey), month: periodKeyFor('month', dayKey) }
+}
 
 function periodKeyFor(kind: HistoryPeriodKind, dayKey: string) {
   switch (kind) {

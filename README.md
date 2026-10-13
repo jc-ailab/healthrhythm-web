@@ -2,6 +2,17 @@
 
 Chinese-first personal health routine app. V3.2 is a local incremental candidate based on V3.1 commit `feff59340757c298aaa13e0bdb72df0f60804a40`; records remain in browser storage.
 
+## Release History date-selection fix — 2026-10-13
+
+Release branch: `release/healthrhythm-v3.2`. PR #10 remains blocked on corrected-Preview real-device acceptance; this fix is local only.
+
+- Reproduced with the existing V2 fixture imported through `parseImportText` → schema-6 `restoreStoredState` → the actual History view model: selecting 15 April showed that day's 25-minute movement, but weekly/monthly selectors stayed in October and returned zeros. Import normalization and aggregation preserved the April records; the three independent view selections caused the mismatch.
+- Selecting a review day, using day arrows or resetting to 今天 now aligns the summaries to that assigned calendar day's week/month. Week/month controls still support independent browsing until another review day is chosen. Empty iOS date-picker values remain ignored; future dates are consistently clamped to today. No event dates, IDs, occurrence/recording timestamps or stored data are rewritten by this change.
+- Fixture before/after: weekly/monthly movement **0 → 2 sessions / 60 minutes**, foundation **0 → 2**, habit completions **0 → 2**, captures **0 → 1**, strength completions **0 → 3**. Daily movement remains 25 minutes on 15 April and 35 minutes on 14 April. These are synthetic fixture results, not measurements of the user's private backup.
+- Focused regressions in `src/lib/historyImport.test.ts` exercise the actual view-model callbacks using a synchronous Node hook harness with effects disabled. They cover bare/wrapped V2 imports, historical timer/capture formats, day/week/month selection, rapid navigation, assigned/backdated dates, bedtime reviews, Sydney DST/calendar boundaries, independent and grouped records, no double-counting and full schema-6 JSON round trips. Existing real-loader/storage-lock regression suites remain required. This harness is not mobile visual testing.
+- Final Node **22.22.1** validation: build/lint PASS; **360 tests PASS across 13 files**, including 15 new History import/view-state regressions; production dependency audit **0 vulnerabilities**. Dependencies/lockfile unchanged.
+- Schema 6, `health-rhythm-web-v3`, migration/readback/backup safeguards and Web Locks are unchanged. Before release, update Preview only with authorization, then import a copy of the real V2 backup on iPhone; select known historical days and verify matching week/month headings and totals, cross a month boundary with day arrows, verify bedtime/group counts, export/restore and compare again. Retain all original backups. No main merge or Production deployment until this passes.
+
 ## V3.2 local candidate — universal editable groups
 
 Local branch: `feature/healthrhythm-v3.2`, based on the verified V3.1 branch/commit above. PR #7 and PR #8 remain unmerged; this candidate is not pushed, published or deployed. Prior V3/V3.1 implementation snapshots below describe their historical pre-publication state.
