@@ -13,16 +13,16 @@ export const STORAGE_NOTICES = {
   recovered: {
     kind: 'recovered',
     message:
-      'Your saved data could not be read, so the app started fresh. A backup copy of the old data was kept on this device.',
+      '无法读取存档，已保留本机原数据备份。当前使用空白状态。',
   },
   unprotected: {
     kind: 'unprotected',
     message:
-      'Your saved data could not be read or backed up. To avoid overwriting it, changes in this session will not be saved.',
+      '无法读取或备份存档，已暂停写入，原数据保留。',
   },
   saveFailed: {
     kind: 'save-failed',
-    message: 'Could not save to this browser (storage may be full or blocked). Recent changes may be lost.',
+    message: '无法保存到浏览器，存储空间可能已满或被阻止。近期改动尚未保存。',
   },
 } as const satisfies Record<string, StorageNotice>
 
@@ -37,7 +37,7 @@ export function getStorageNotice() {
 }
 
 export function setStorageNotice(notice: StorageNotice | null) {
-  if (currentNotice?.kind === notice?.kind) {
+  if (currentNotice?.kind === notice?.kind && currentNotice?.message === notice?.message) {
     return
   }
 

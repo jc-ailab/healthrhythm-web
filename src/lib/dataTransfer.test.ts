@@ -32,7 +32,7 @@ import {
 } from './state'
 import { resetStorageStatus } from './storageStatus'
 
-const STORAGE_KEY = 'health-rhythm-web-v2'
+const STORAGE_KEY = 'health-rhythm-web-v3'
 const INDEX_KEY = 'health-rhythm-web-meta-backups'
 
 function makeStorage() {
@@ -109,7 +109,7 @@ describe('export', () => {
     const state = richState()
     const file = JSON.parse(buildExportText(state, NOW))
 
-    expect(file).toMatchObject({ format: EXPORT_FORMAT, formatVersion: 1, stateVersion: 3, exportedAt: NOW.toISOString() })
+    expect(file).toMatchObject({ format: EXPORT_FORMAT, formatVersion: 1, stateVersion: 6, exportedAt: NOW.toISOString() })
     expect(JSON.stringify(file.state)).toBe(json(state))
     expect(Object.keys(file).sort()).toEqual(['exportedAt', 'format', 'formatVersion', 'state', 'stateVersion'])
   })
@@ -129,9 +129,9 @@ describe('export', () => {
     expect(state.library.habits.some((habit) => habit.id === 'habit-custom')).toBe(true)
   })
 
-  it('does not change the state or storage', () => {
+  it('does not change the state or storage', async () => {
     const state = richState()
-    saveState(state)
+    await saveState(state)
     const before = json(state)
     const storageBefore = snapshot()
 
@@ -181,7 +181,7 @@ describe('import parsing', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.state.version).toBe(3)
+    expect(result.state.version).toBe(6)
     expect(result.state.library.habits.length).toBeGreaterThan(0)
     expect(result.state.today.movementSessions).toEqual([])
     expect(result.state.history.find((record) => record.dayKey === '2026-04-14')!.rhythmEntries).toHaveLength(1)
@@ -240,13 +240,13 @@ describe('import parsing', () => {
 
   it.each([
     ['a newer export format', exportWith((file) => (file.formatVersion = 2))],
-    ['a newer state version', exportWith((file) => (file.state.version = 4))],
+    ['a newer state version', exportWith((file) => (file.state.version = 7))],
   ])('rejects %s as unsupported', (_, text) => {
     expect(parseImportText(text, NOW)).toEqual({ ok: false, error: DATA_ERRORS.unsupportedFormat })
   })
 
-  it('never writes to storage while parsing, valid or not', () => {
-    saveState(richState())
+  it('never writes to storage while parsing, valid or not', async () => {
+    await saveState(richState())
     const before = snapshot()
 
     parseImportText(buildExportText(richState(), NOW), NOW)
@@ -257,40 +257,40 @@ describe('import parsing', () => {
 })
 
 describe('replacing live data', () => {
-  function liveAndCandidate() {
+  async function liveAndCandidate() {
     const live = ensureCurrentDay(createInitialState(NOW), NOW)
-    saveState(live)
+    await saveState(live)
     const candidate = richState()
     return { live, candidate }
   }
 
-  it('backs up the live state, then writes the new one', () => {
-    const { live, candidate } = liveAndCandidate()
+  it('backs up the live state, then writes the new one', async () => {
+    const { live, candidate } = await liveAndCandidate()
 
-    const result = replaceWithSafetyCopy(live, candidate, 'before-import', NOW)
+    const result = await replaceWithSafetyCopy(live, candidate, 'before-import', NOW)
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(readBackup(result.backupKey)).toBe(json(live))
     expect(storage.data.get(STORAGE_KEY)).toBe(json(candidate))
     expect(listBackups()[0].meta).toEqual({ createdAt: NOW.toISOString(), reason: 'before-import' })
-    expect(json(loadPersistedState(NOW).state)).toBe(json(candidate))
+    expect(json((await loadPersistedState(NOW)).state)).toBe(json(candidate))
   })
 
-  it('leaves the live data untouched when the backup cannot be written', () => {
-    const { live, candidate } = liveAndCandidate()
+  it('leaves the live data untouched when the backup cannot be written', async () => {
+    const { live, candidate } = await liveAndCandidate()
     storage.failWritesWhen((key) => key.startsWith(BACKUP_KEY_PREFIX))
 
-    expect(replaceWithSafetyCopy(live, candidate, 'before-import', NOW)).toEqual({ ok: false, error: DATA_ERRORS.backupFailed })
+    expect(await replaceWithSafetyCopy(live, candidate, 'before-import', NOW)).toEqual({ ok: false, error: DATA_ERRORS.backupFailed })
     expect(storage.data.get(STORAGE_KEY)).toBe(json(live))
     expect(listBackups()).toEqual([])
   })
 
-  it('leaves the live data untouched when the new state cannot be written, and keeps the backup', () => {
-    const { live, candidate } = liveAndCandidate()
+  it('leaves the live data untouched when the new state cannot be written, and keeps the backup', async () => {
+    const { live, candidate } = await liveAndCandidate()
     storage.failWritesWhen((key) => key === STORAGE_KEY)
 
-    const result = replaceWithSafetyCopy(live, candidate, 'before-import', NOW)
+    const result = await replaceWithSafetyCopy(live, candidate, 'before-import', NOW)
 
     expect(result).toEqual({ ok: false, error: DATA_ERRORS.saveFailed })
     expect(storage.data.get(STORAGE_KEY)).toBe(json(live))
@@ -309,8 +309,8 @@ describe('replacing live data', () => {
 })
 
 describe('recovery backups', () => {
-  it('lists only backup keys, newest first, with size and origin', () => {
-    saveState(richState())
+  it('lists only backup keys, newest first, with size and origin', async () => {
+    await saveState(richState())
     storage.data.set('unrelated-key', 'x')
     storage.data.set(`${BACKUP_KEY_PREFIX}legacy-1`, '{"from":"before metadata existed"}')
     writeBackup('{broken', 'unreadable', at(8))
@@ -324,10 +324,10 @@ describe('recovery backups', () => {
     expect(backups.some((backup) => backup.key === INDEX_KEY)).toBe(false)
   })
 
-  it('records unreadable saves found at startup as such', () => {
+  it('records unreadable saves found at startup as such', async () => {
     storage.data.set(STORAGE_KEY, '{not valid json')
 
-    loadPersistedState(NOW)
+    await loadPersistedState(NOW)
 
     expect(listBackups()).toEqual([
       expect.objectContaining({ key: backupKeyFor('{not valid json'), raw: '{not valid json', meta: expect.objectContaining({ reason: 'unreadable' }) }),
@@ -344,15 +344,15 @@ describe('recovery backups', () => {
     expect(parseBackup(STORAGE_KEY, NOW)).toEqual({ ok: false, error: DATA_ERRORS.backupMissing })
   })
 
-  it('restores a backup after saving the live state, and keeps the restored backup', () => {
+  it('restores a backup after saving the live state, and keeps the restored backup', async () => {
     const restoredState = richState()
     const chosen = writeBackup(json(restoredState), 'before-import', at(9))!
     const live = ensureCurrentDay(createInitialState(NOW), NOW)
-    saveState(live)
+    await saveState(live)
     const parsed = parseBackup(chosen, NOW)
     if (!parsed.ok) throw new Error(parsed.error)
 
-    const result = replaceWithSafetyCopy(live, parsed.state, 'before-restore', NOW)
+    const result = await replaceWithSafetyCopy(live, parsed.state, 'before-restore', NOW)
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -361,8 +361,8 @@ describe('recovery backups', () => {
     expect(storage.data.get(STORAGE_KEY)).toBe(json(restoredState))
   })
 
-  it('deletes one backup without touching live data or other backups', () => {
-    saveState(richState())
+  it('deletes one backup without touching live data or other backups', async () => {
+    await saveState(richState())
     const keep = writeBackup('{"a":1}', 'unreadable', at(8))!
     const remove = writeBackup('{"b":2}', 'before-import', at(9))!
     const live = storage.data.get(STORAGE_KEY)
@@ -375,8 +375,8 @@ describe('recovery backups', () => {
     expect(JSON.parse(storage.data.get(INDEX_KEY)!)).not.toHaveProperty(remove)
   })
 
-  it('refuses to delete anything that is not a backup', () => {
-    saveState(richState())
+  it('refuses to delete anything that is not a backup', async () => {
+    await saveState(richState())
 
     expect(deleteBackup(STORAGE_KEY)).toBe(false)
     expect(deleteBackup(INDEX_KEY)).toBe(false)
@@ -434,7 +434,7 @@ describe('cleanup', () => {
     expect(listBackups()).toHaveLength(SAFETY_COPIES_KEPT)
   })
 
-  it('never removes the backup that was just restored, even when it is the oldest copy', () => {
+  it('never removes the backup that was just restored, even when it is the oldest copy', async () => {
     // Five distinct, restorable states.
     const copies = Array.from({ length: SAFETY_COPIES_KEPT }, (_, index) => {
       const state = ensureCurrentDay(createInitialState(NOW), NOW)
@@ -446,55 +446,55 @@ describe('cleanup', () => {
     const parsed = parseBackup(oldest, NOW)
     if (!parsed.ok) throw new Error(parsed.error)
 
-    const result = replaceWithSafetyCopy(richState(), parsed.state, 'before-restore', NOW, oldest)
+    const result = await replaceWithSafetyCopy(richState(), parsed.state, 'before-restore', NOW, oldest)
 
     expect(result.ok).toBe(true)
     expect(readBackup(oldest)).not.toBeNull()
     if (result.ok) expect(readBackup(result.backupKey)).not.toBeNull()
   })
 
-  it('prunes after a successful replacement, never before', () => {
+  it('prunes after a successful replacement, never before', async () => {
     const copies = Array.from({ length: 6 }, (_, index) => writeBackup(`{"copy":${index}}`, 'before-import', at(2 + index))!)
     const live = ensureCurrentDay(createInitialState(NOW), NOW)
     storage.failWritesWhen((key) => key === STORAGE_KEY)
 
-    replaceWithSafetyCopy(live, richState(), 'before-import', NOW)
+    await replaceWithSafetyCopy(live, richState(), 'before-import', NOW)
 
     expect(copies.every((key) => readBackup(key) !== null)).toBe(true)
   })
 })
 
 describe('full round trip', () => {
-  it('export → reset → import → restore reproduces each state exactly', () => {
+  it('export → reset → import → restore reproduces each state exactly', async () => {
     const original = richState()
-    saveState(original)
+    await saveState(original)
     const exported = buildExportText(original, NOW)
 
     // Reset: storage wiped, app starts fresh.
     storage.data.clear()
-    const fresh = loadPersistedState(NOW).state
-    saveState(fresh)
+    const fresh = (await loadPersistedState(NOW)).state
+    await saveState(fresh)
 
     // Import the file.
     const imported = parseImportText(exported, NOW)
     if (!imported.ok) throw new Error(imported.error)
-    const importResult = replaceWithSafetyCopy(fresh, imported.state, 'before-import', NOW)
+    const importResult = await replaceWithSafetyCopy(fresh, imported.state, 'before-import', NOW)
     if (!importResult.ok) throw new Error(importResult.error)
-    const afterImport = loadPersistedState(NOW).state
+    const afterImport = (await loadPersistedState(NOW)).state
     expect(json(afterImport)).toBe(json(original))
 
     // Restore the fresh state from its automatic backup …
     const backOut = parseBackup(importResult.backupKey, NOW)
     if (!backOut.ok) throw new Error(backOut.error)
-    const restoreResult = replaceWithSafetyCopy(afterImport, backOut.state, 'before-restore', NOW)
+    const restoreResult = await replaceWithSafetyCopy(afterImport, backOut.state, 'before-restore', NOW)
     if (!restoreResult.ok) throw new Error(restoreResult.error)
-    expect(json(loadPersistedState(NOW).state)).toBe(json(fresh))
+    expect(json((await loadPersistedState(NOW)).state)).toBe(json(fresh))
 
     // … and the imported data again from the copy made before that restore.
     const again = parseBackup(restoreResult.backupKey, NOW)
     if (!again.ok) throw new Error(again.error)
-    replaceWithSafetyCopy(backOut.state, again.state, 'before-restore', NOW)
-    const final = loadPersistedState(NOW).state
+    await replaceWithSafetyCopy(backOut.state, again.state, 'before-restore', NOW)
+    const final = (await loadPersistedState(NOW)).state
     expect(json(final)).toBe(json(original))
     expect(final.today.movementSessions.map((session) => session.note ?? null)).toEqual(['晚课', null])
   })

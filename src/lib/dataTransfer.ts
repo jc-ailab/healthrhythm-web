@@ -1,7 +1,11 @@
+import { validateGroups } from './groups'
+import { validateV31 } from './v31'
 // Export, import and backup restore. Everything that replaces live data goes through
 // `replaceWithSafetyCopy`, which never swaps data in before a copy of the current state is
 // stored and the new state is written.
 
+import { V2_STORAGE_KEY, V1_STORAGE_KEY } from './storageKeys'
+import type { PersistenceSession } from './persistence'
 import { MOVEMENT_TYPES, toDayKey, type AppState, type DayRecord } from './domain'
 import {
   buildDailyHistorySummary,
@@ -10,14 +14,15 @@ import {
   historyEarliestDayKey,
   movementDefaultsFor,
   restoreStoredState,
-  saveState,
+  getPersistenceSession,
+  assertCanonicalState,
 } from './state'
 import { pruneSafetyCopies, readBackup, writeBackup, type BackupReason } from './backupStore'
 
 export const EXPORT_FORMAT = 'healthrhythm-export'
 export const EXPORT_FORMAT_VERSION = 1
 /** Saves with these `version` values are understood by migrateState. */
-const SUPPORTED_STATE_VERSIONS: readonly unknown[] = [undefined, 1, 2, 3]
+const SUPPORTED_STATE_VERSIONS: readonly unknown[] = [undefined, 1, 2, 3, 4, 5, 6]
 // localStorage holds roughly 5 MB per site, so nothing larger could be stored anyway.
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024
 export const SAFETY_COPIES_KEPT = 5
@@ -50,7 +55,7 @@ export const DATA_ERRORS = {
   invalid: '文件内容不完整或已损坏，无法导入。',
   backupMissing: '找不到这份备份，可能已被删除。',
   backupFailed: '无法先保存当前数据的备份（存储空间可能已满），已取消，当前数据未改变。请先删除不需要的备份。',
-  saveFailed: '无法写入新数据，已取消，当前数据未改变。',
+  saveFailed: '无法安全写入或核验新数据，已暂停保存。请保留备份并刷新检查；不要清除浏览器数据。',
 } as const
 
 export function exportFileName(now: Date) {
@@ -123,26 +128,37 @@ export function parseBackup(key: string, now: Date): ParseResult {
  * `next`. Stops before anything is replaced if either step fails. On success the caller swaps
  * `next` into memory.
  */
-export function replaceWithSafetyCopy(
+export async function replaceWithSafetyCopy(
   current: AppState,
   next: AppState,
   reason: Extract<BackupReason, 'before-import' | 'before-restore'>,
   now: Date,
   // The backup being restored from: cleanup must never remove it as a side effect.
   restoredKey?: string,
-): ReplaceResult {
-  const currentRaw = JSON.stringify(current)
-  const backupKey = writeBackup(currentRaw, reason, now)
-  if (backupKey === null || readBackup(backupKey) !== currentRaw) {
-    return { ok: false, error: DATA_ERRORS.backupFailed }
-  }
+  session: PersistenceSession = getPersistenceSession(),
+): Promise<ReplaceResult> {
+  return await session.exclusive((): ReplaceResult => {
+    const bootstrap = !session.readKnown
+    if (bootstrap) {
+      if (!session.canBootstrap) return { ok: false, error: DATA_ERRORS.saveFailed }
+      session.canBootstrap = false
+      if (session.readCanonical() !== null || localStorage.getItem(V2_STORAGE_KEY) !== null || localStorage.getItem(V1_STORAGE_KEY) !== null) return { ok: false, error: DATA_ERRORS.saveFailed }
+    }
+    if ((!bootstrap && !session.getCanPersist() && !session.getCanRecover()) || !session.checkCurrent()) return { ok: false, error: DATA_ERRORS.saveFailed }
+    assertCanonicalState(next)
+    const currentRaw = session.getCanRecover() ? session.recoveryRaw! : JSON.stringify(current)
+    const backupKey = writeBackup(currentRaw, reason, now)
+    if (backupKey === null || readBackup(backupKey) !== currentRaw) {
+      return { ok: false, error: DATA_ERRORS.backupFailed }
+    }
 
-  if (!saveState(next)) {
-    return { ok: false, error: DATA_ERRORS.saveFailed }
-  }
+    session.writeVerified(JSON.stringify(next), assertCanonicalState)
+    session.generation += 1
+    session.activate()
 
-  pruneSafetyCopies(SAFETY_COPIES_KEPT, restoredKey ? [backupKey, restoredKey] : [backupKey])
-  return { ok: true, backupKey }
+    pruneSafetyCopies(SAFETY_COPIES_KEPT, restoredKey ? [backupKey, restoredKey] : [backupKey])
+    return { ok: true, backupKey }
+  }) ?? { ok: false, error: DATA_ERRORS.saveFailed }
 }
 
 export function summarizeState(state: AppState): DataSummary {
@@ -157,10 +173,12 @@ export function summarizeState(state: AppState): DataSummary {
 
 function hasContent(record: DayRecord) {
   return (
+    (record.journals?.length ?? 0) > 0 || (record.groupSessions?.length ?? 0) > 0 || (record.strengthEntries?.length ?? 0) > 0 ||
     record.rhythmEntries.length > 0 ||
     record.breathSessions.length > 0 ||
     record.strengthCompletedExerciseIds.length > 0 ||
     Object.keys(record.habits).length > 0 ||
+    Object.values(record.habitEvents).some((events) => (events?.length ?? 0) > 0) ||
     Object.keys(record.foundation).length > 0 ||
     record.movementSessions.length > 0
   )
@@ -203,6 +221,15 @@ function checkTimestampMap(value: unknown, field: string) {
   }
 }
 
+function checkEventsMap(value: unknown, field: string) {
+  if (
+    !isRecord(value) ||
+    !Object.values(value).every((events) => events === undefined || (Array.isArray(events) && events.every(isString)))
+  ) {
+    fail(field)
+  }
+}
+
 const isRhythmEntry = (entry: Record<string, unknown>) =>
   isString(entry.id) && isString(entry.startAt) && isString(entry.endAt) && isFiniteNumber(entry.durationSeconds)
 
@@ -222,7 +249,9 @@ const isMovementSession = (entry: Record<string, unknown>) =>
   (entry.intensity === undefined || isString(entry.intensity)) &&
   (entry.note === undefined || isString(entry.note))
 
-function assertUsableState(state: AppState) {
+export function assertUsableState(state: AppState) {
+  validateV31(state)
+  validateGroups(state)
   if (!isString(state.currentDayKey) || !DAY_KEY_PATTERN.test(state.currentDayKey)) fail('currentDayKey')
 
   checkArray(state.rhythm.entriesToday, 'rhythm.entriesToday', isRhythmEntry)
@@ -230,14 +259,7 @@ function assertUsableState(state: AppState) {
 
   checkTimestampMap(state.today.completionTimesByHabitId, 'today.completionTimesByHabitId')
   checkTimestampMap(state.today.foundationCompletedAt, 'today.foundationCompletedAt')
-  if (
-    !isRecord(state.today.eventsByHabitId) ||
-    !Object.values(state.today.eventsByHabitId).every(
-      (events) => events === undefined || (Array.isArray(events) && events.every(isString)),
-    )
-  ) {
-    fail('today.eventsByHabitId')
-  }
+  checkEventsMap(state.today.eventsByHabitId, 'today.eventsByHabitId')
   checkArray(state.today.movementSessions, 'today.movementSessions', isMovementSession)
 
   if (!state.strength.completedExerciseIds.every(isString)) fail('strength.completedExerciseIds')
@@ -259,6 +281,7 @@ function assertUsableState(state: AppState) {
     checkArray(record.breathSessions, `history ${record.dayKey} breath`, isBreathSession)
     checkArray(record.movementSessions, `history ${record.dayKey} movement`, isMovementSession)
     checkTimestampMap(record.habits, `history ${record.dayKey} habits`)
+    checkEventsMap(record.habitEvents, `history ${record.dayKey} habitEvents`)
     checkTimestampMap(record.foundation, `history ${record.dayKey} foundation`)
     return Array.isArray(record.strengthCompletedExerciseIds) && record.strengthCompletedExerciseIds.every(isString)
   })

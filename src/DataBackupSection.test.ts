@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { PersistenceSession } from './lib/persistence'
 import { DataBackupSection } from './DataBackupSection'
 import { createInitialState, type AppState } from './lib/domain'
 import { ensureCurrentDay, toggleBreathState, toggleRhythmState } from './lib/state'
@@ -45,6 +46,16 @@ describe('import file input', () => {
     ['a running Breath session', () => toggleBreathState(idle(), NOW)],
   ])('is disabled during %s', (_, makeState) => {
     expect(fileInputIn(makeState())).toMatch(/\sdisabled=""/)
+  })
+
+  it('allows explicit recovery only after the raw original is safely protected', () => {
+    const session = new PersistenceSession()
+    session.recoveryRaw = '{original-unreadable}'
+    session.block('Recovery needed', true)
+    const html = renderToStaticMarkup(createElement(DataBackupSection, { state: idle(), canPersist: false, canRecover: true, session, onReplace: () => {} }))
+    expect(html.match(/<input[^>]*type="file"[^>]*>/)?.[0]).not.toMatch(/\sdisabled=/)
+    expect(html).toContain('下载原始数据')
+    expect(html).toContain('已暂停记录')
   })
 
   it('is disabled when unreadable data could not be backed up', () => {

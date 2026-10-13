@@ -1,4 +1,8 @@
-export type TabKey = 'rhythm' | 'breath' | 'today' | 'history' | 'strength' | 'library'
+import { seedGroups, type GroupTemplate, type GroupSession, type GroupLaunch } from './groups'
+import { seedV31, type DayExtras, type DominoBlock, type RecordInfo } from './v31'
+import { normalizeHabit, translateBuiltIn, type HabitGroup, type RecordingMode, type HabitFrequency } from './v3'
+
+export type TabKey = 'rhythm' | 'breath' | 'today' | 'history' | 'strength' | 'habit' | 'library'
 
 export type RhythmStatus = 'idle' | 'running' | 'paused' | 'completed'
 export type BreathStatus = 'idle' | 'running' | 'paused' | 'completed'
@@ -59,7 +63,7 @@ export interface BreathState {
   elapsedSecondsBeforeCurrentRun: number
 }
 
-export interface TodayState {
+export interface TodayState extends DayExtras {
   completionTimesByHabitId: Partial<Record<HabitId, string>>
   eventsByHabitId: Partial<Record<HabitId, string[]>>
   /** Completion time per daily foundation item (see FOUNDATION_ITEMS). */
@@ -94,18 +98,23 @@ export interface StrengthState {
   routines: StrengthRoutine[]
 }
 
-export interface DayRecord {
+export interface DayRecord extends DayExtras {
   dayKey: string
   rhythmEntries: RhythmEntry[]
   breathSessions: BreathSessionEntry[]
   strengthCompletedExerciseIds: string[]
   strengthLastUpdatedAt: string | null
   habits: Partial<Record<HabitId, string>>
+  /** Capture times for multi-capture habits (see MULTI_CAPTURE_HABIT_IDS). */
+  habitEvents: Partial<Record<HabitId, string[]>>
   foundation: Partial<Record<FoundationItemId, string>>
   movementSessions: MovementSession[]
 }
 
 export interface HabitDefinition {
+  group?: HabitGroup
+  recordingMode?: RecordingMode
+  frequency?: HabitFrequency
   id: HabitId
   name: string
   category: string
@@ -116,6 +125,9 @@ export interface HabitDefinition {
 }
 
 export interface ExerciseDefinition {
+  dailyCore?: boolean
+  trying?: boolean
+  foundationId?: FoundationItemId
   id: string
   name: string
   category: string
@@ -129,12 +141,15 @@ export interface ExerciseDefinition {
 }
 
 export interface LibraryState {
+  groups?: GroupTemplate[]
+  dominoBlocks?: DominoBlock[]
   habits: HabitDefinition[]
   exercises: ExerciseDefinition[]
 }
 
 export interface AppState {
-  version: 3
+  pendingGroupLaunch?: GroupLaunch
+  version: 6
   currentDayKey: string
   selectedTab: TabKey
   rhythm: RhythmState
@@ -190,6 +205,12 @@ export interface ResolvedRoutineExercise extends ResolvedStrengthExercise {
 }
 
 export interface HistorySummary {
+  groups: ReturnType<typeof import('./groups').groupStatistics>
+  items: ReturnType<typeof import('./groups').itemStatistics>
+  habitCompletionsCount: number
+  habitCapturesCount: number
+  strengthCompletionsCount: number
+  breathSessionsCount: number
   totalRhythmMinutes: number
   rhythmDaysCount: number
   strengthDaysCount: number
@@ -215,7 +236,11 @@ export interface TodayTimelineEvent {
   title: string
   summary: string
   detail?: string
-  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement'
+  note?: string
+  assignedDate?: string
+  info?: RecordInfo
+  groupSession?: GroupSession
+  kind: 'rhythm' | 'breath' | 'strength' | 'habit' | 'movement' | 'journal' | 'group'
 }
 
 export const RHYTHM_BPM = 180
@@ -237,7 +262,7 @@ export const MULTI_CAPTURE_HABIT_IDS: ReadonlySet<string> = new Set([
 ])
 
 export function createDefaultHabits(): HabitDefinition[] {
-  return [
+  const habits: HabitDefinition[] = [
     {
       id: BUILT_IN_HABIT_IDS.mindfulEating,
       name: 'Mindful eating',
@@ -280,7 +305,7 @@ export function createDefaultHabits(): HabitDefinition[] {
       category: 'Movement',
       note: 'A light everyday walk outside or indoors.',
       enabled: true,
-      showOnToday: false,
+      showOnToday: true,
       isBuiltIn: true,
     },
     {
@@ -293,10 +318,11 @@ export function createDefaultHabits(): HabitDefinition[] {
       isBuiltIn: true,
     },
   ]
+  return [...habits, ...MOVEMENT_TYPES.map((type) => ({ id: type.id, name: type.label, category: '运动', note: '', enabled: true, showOnToday: true, isBuiltIn: true, recordingMode: 'duration' as const }))].map(normalizeHabit)
 }
 
 export function createDefaultExercises(): ExerciseDefinition[] {
-  return [
+  const exercises: ExerciseDefinition[] = [
     {
       id: 'routine-a-sit-to-stand',
       name: 'Sit-to-stand from high chair',
@@ -418,12 +444,13 @@ export function createDefaultExercises(): ExerciseDefinition[] {
       isBuiltIn: true,
     },
   ]
+  return [...exercises.map(translateBuiltIn), ...FOUNDATION_ITEMS.map((item) => ({ id: item.id, foundationId: item.id, name: item.label, category: '核心', description: '', caution: '', suggestedVolume: '', suggestedSets: '', estimatedTime: '', enabled: true, dailyCore: true, isBuiltIn: true }))]
 }
 
 export const STRENGTH_ROUTINES: StrengthRoutine[] = [
   {
     id: 'routine-a',
-    name: 'Routine A',
+    name: '训练组合 A',
     enabled: true,
     isBuiltIn: true,
     exercises: [
@@ -436,7 +463,7 @@ export const STRENGTH_ROUTINES: StrengthRoutine[] = [
   },
   {
     id: 'routine-b',
-    name: 'Routine B',
+    name: '训练组合 B',
     enabled: true,
     isBuiltIn: true,
     exercises: [
@@ -459,9 +486,10 @@ export const FOUNDATION_ITEMS: readonly { id: FoundationItemId; label: string }[
 
 export const MOVEMENT_TYPES: readonly { id: string; label: string; defaultMinutes: number }[] = [
   { id: 'swimming', label: '游泳', defaultMinutes: 30 },
-  { id: 'zumba', label: 'Zumba', defaultMinutes: 45 },
+  { id: 'zumba', label: '尊巴舞', defaultMinutes: 45 },
   { id: 'yoga', label: '瑜伽', defaultMinutes: 30 },
   { id: 'jingang', label: '金刚功', defaultMinutes: 30 },
+  { id: 'pilates', label: '普拉提', defaultMinutes: 30 },
 ]
 
 export const MOVEMENT_INTENSITY_LABELS: Record<MovementIntensity, string> = {
@@ -495,14 +523,14 @@ export const BREATH_MODE_LABELS: Record<BreathMode, string> = {
   fourSevenEight: '4-7-8',
   fourFourFourFour: '4-4-4-4',
   sixSixSixSix: '6-6-6-6',
-  custom: 'Custom',
+  custom: '自定义',
 }
 
 export const BREATH_PHASE_LABELS: Record<BreathPhase, string> = {
-  inhale: 'Inhale',
-  hold: 'Hold',
-  exhale: 'Exhale',
-  endHold: 'Hold',
+  inhale: '吸气',
+  hold: '屏息',
+  exhale: '呼气',
+  endHold: '屏息',
 }
 
 export function clamp(value: number, min: number, max: number) {
@@ -558,16 +586,17 @@ export function createEmptyDayRecord(dayKey: string): DayRecord {
     strengthCompletedExerciseIds: [],
     strengthLastUpdatedAt: null,
     habits: {},
+    habitEvents: {},
     foundation: {},
     movementSessions: [],
   }
 }
 
-export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): AppState {
+export function createInitialState(now: Date, selectedTab: TabKey = 'today'): AppState {
   const dayKey = toDayKey(now)
 
-  return {
-    version: 3,
+  return seedGroups(seedV31({
+    version: 6,
     currentDayKey: dayKey,
     selectedTab,
     rhythm: {
@@ -604,14 +633,14 @@ export function createInitialState(now: Date, selectedTab: TabKey = 'rhythm'): A
     strength: {
       completedExerciseIds: [],
       lastUpdatedAt: null,
-      routines: STRENGTH_ROUTINES,
+      routines: STRENGTH_ROUTINES.map((routine) => ({ ...routine, exercises: routine.exercises.map((exercise) => ({ ...exercise })) })),
     },
     library: {
       habits: createDefaultHabits(),
       exercises: createDefaultExercises(),
     },
     history: [],
-  }
+  }))
 }
 
 export function toDayKey(date: Date) {
@@ -662,7 +691,7 @@ export function monthDayKeys(monthKey: string) {
 
 export function formatClockTime(value: string | Date) {
   const date = value instanceof Date ? value : new Date(value)
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat('zh-CN', {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date)
@@ -670,7 +699,7 @@ export function formatClockTime(value: string | Date) {
 
 export function formatFullDate(value: string | Date) {
   const date = value instanceof Date ? value : new Date(value)
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat('zh-CN', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -680,11 +709,11 @@ export function formatFullDate(value: string | Date) {
 
 export function formatDurationMinutes(totalSeconds: number) {
   if (totalSeconds < 60) {
-    return '1 min'
+    return '不足 1 分钟'
   }
 
-  const minutes = Math.max(1, Math.floor(totalSeconds / 60))
-  return `${minutes} min`
+  const minutes = Math.round(totalSeconds / 6) / 10
+  return `${minutes} 分钟`
 }
 
 export function formatCountdown(totalSeconds: number) {

@@ -1,3 +1,4 @@
+import { RECOVERY_NOTICE } from './persistence'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -31,9 +32,9 @@ import {
   toggleFoundationItemState,
   updateMovementSessionState,
 } from './state'
-import { STORAGE_NOTICES, resetStorageStatus } from './storageStatus'
+import { resetStorageStatus } from './storageStatus'
 
-const STORAGE_KEY = 'health-rhythm-web-v2'
+const STORAGE_KEY = 'health-rhythm-web-v3'
 
 let storage: Map<string, string>
 
@@ -68,6 +69,7 @@ function pastRecord(dayKey: string, overrides: Partial<DayRecord> = {}): DayReco
     strengthCompletedExerciseIds: [],
     strengthLastUpdatedAt: null,
     habits: {},
+    habitEvents: {},
     foundation: {},
     movementSessions: [],
     ...overrides,
@@ -100,14 +102,14 @@ function preFeatureSave(version: 1 | 2 | 3) {
 }
 
 describe('loading saves written before foundation and movement existed', () => {
-  it.each([1, 2, 3] as const)('loads a v%s save with empty defaults and keeps all existing data', (version) => {
-    const key = version === 1 ? 'health-rhythm-web-v1' : STORAGE_KEY
+  it.each([1, 2, 3] as const)('loads a v%s save with empty defaults and keeps all existing data', async (version) => {
+    const key = version === 1 ? 'health-rhythm-web-v1' : 'health-rhythm-web-v2'
     storage.set(key, JSON.stringify(preFeatureSave(version)))
 
-    const { state, notice } = loadPersistedState(at(10))
+    const { state, notice } = await loadPersistedState(at(10))
 
     expect(notice).toBeNull()
-    expect(state.version).toBe(3)
+    expect(state.version).toBe(6)
     expect(state.today.foundationCompletedAt).toEqual({})
     expect(state.today.movementSessions).toEqual([])
     expect(state.today.completionTimesByHabitId).toEqual({ earlySleep: at(9).toISOString() })
@@ -118,12 +120,12 @@ describe('loading saves written before foundation and movement existed', () => {
     expect(yesterday.habits).toEqual({ mindfulEating: at(12, 0, 14).toISOString() })
     expect(yesterday.foundation).toEqual({})
     expect(yesterday.movementSessions).toEqual([])
-    expect(storage.has(backupKeyFor(storage.get(key)!))).toBe(false)
+    expect(storage.get(backupKeyFor(storage.get(key)!))).toBe(storage.get(key))
   })
 
-  it('renders history and weekly summaries for a migrated save without throwing', () => {
-    storage.set(STORAGE_KEY, JSON.stringify(preFeatureSave(3)))
-    const { state } = loadPersistedState(at(10))
+  it('renders history and weekly summaries for a migrated save without throwing', async () => {
+    storage.set('health-rhythm-web-v2', JSON.stringify(preFeatureSave(3)))
+    const { state } = await loadPersistedState(at(10))
 
     expect(() => buildHistorySummary(state.history, weekDayKeys(weekStartDayKey('2026-04-15')))).not.toThrow()
     for (const record of state.history) {
@@ -132,25 +134,25 @@ describe('loading saves written before foundation and movement existed', () => {
     expect(() => buildTodayTimeline(state, [], [])).not.toThrow()
   })
 
-  it('backs up instead of loading when a new field is malformed', () => {
+  it('backs up instead of loading when a new field is malformed', async () => {
     const saved = JSON.parse(JSON.stringify(stateAt(at(10))))
     saved.today.movementSessions = 'not a list'
     const raw = JSON.stringify(saved)
     storage.set(STORAGE_KEY, raw)
 
-    const result = loadPersistedState(at(10))
+    const result = await loadPersistedState(at(10))
 
-    expect(result.notice).toBe(STORAGE_NOTICES.recovered)
+    expect(result.notice).toBe(RECOVERY_NOTICE)
     expect(storage.get(backupKeyFor(raw))).toBe(raw)
   })
 
-  it('backs up instead of loading when a history record has malformed sessions', () => {
+  it('backs up instead of loading when a history record has malformed sessions', async () => {
     const saved = JSON.parse(JSON.stringify(stateAt(at(10))))
     saved.history.push({ ...pastRecord('2026-04-14'), movementSessions: { swim: 1 } })
     const raw = JSON.stringify(saved)
     storage.set(STORAGE_KEY, raw)
 
-    expect(loadPersistedState(at(10)).notice).toBe(STORAGE_NOTICES.recovered)
+    expect((await loadPersistedState(at(10))).notice).toBe(RECOVERY_NOTICE)
     expect(storage.get(backupKeyFor(raw))).toBe(raw)
   })
 })
@@ -177,14 +179,14 @@ describe('daily foundation items', () => {
     expect(toggleFoundationItemState(state, 'notAnItem' as never, at(10))).toBe(state)
   })
 
-  it('persists across save and reload', () => {
+  it('persists across save and reload', async () => {
     let state = stateAt(at(10))
     for (const item of FOUNDATION_ITEMS.slice(0, 3)) {
       state = toggleFoundationItemState(state, item.id, at(10))
     }
-    saveState(state)
+    await saveState(state)
 
-    const { state: reloaded } = loadPersistedState(at(11))
+    const { state: reloaded } = await loadPersistedState(at(11))
 
     expect(Object.keys(reloaded.today.foundationCompletedAt)).toEqual(['lowerAbs', 'lowerBack', 'pelvicFloor'])
   })
@@ -239,10 +241,10 @@ describe('movement sessions', () => {
     expect(addMovementSessionState(state, draft, at(10))).toBe(state)
   })
 
-  it('persists across save and reload', () => {
-    saveState(addMovementSessionState(stateAt(at(10)), swim, at(10)))
+  it('persists across save and reload', async () => {
+    await saveState(addMovementSessionState(stateAt(at(10)), swim, at(10)))
 
-    const { state } = loadPersistedState(at(11))
+    const { state } = await loadPersistedState(at(11))
 
     expect(state.today.movementSessions).toHaveLength(1)
     expect(state.today.movementSessions[0].typeId).toBe('swimming')
@@ -329,13 +331,13 @@ describe('movement sessions', () => {
       expect(next.history.find((record) => record.dayKey === '2026-04-15')!.movementSessions).toEqual([second])
     })
 
-    it('removes a session from a past day and survives reload', () => {
+    it('removes a session from a past day and survives reload', async () => {
       let state = addMovementSessionState(stateAt(at(19, 0, 14)), swim, at(19, 0, 14))
       state = ensureCurrentDay(state, at(8))
       const pastId = state.history.find((record) => record.dayKey === '2026-04-14')!.movementSessions[0].id
 
-      saveState(deleteMovementSessionState(state, '2026-04-14', pastId))
-      const { state: reloaded } = loadPersistedState(at(9))
+      await saveState(deleteMovementSessionState(state, '2026-04-14', pastId))
+      const { state: reloaded } = await loadPersistedState(at(9))
 
       expect(reloaded.history.find((record) => record.dayKey === '2026-04-14')!.movementSessions).toEqual([])
     })
@@ -465,6 +467,7 @@ describe('weekly aggregation', () => {
       { typeId: 'zumba', sessionsCount: 1, totalMinutes: 45 },
       { typeId: 'yoga', sessionsCount: 1, totalMinutes: 20 },
       { typeId: 'jingang', sessionsCount: 0, totalMinutes: 0 },
+      { typeId: 'pilates', sessionsCount: 0, totalMinutes: 0 },
       { typeId: 'taichi', sessionsCount: 1, totalMinutes: 15 },
     ])
   })
@@ -635,7 +638,7 @@ describe('History period navigation and aggregation', () => {
       const summary = weekSummary('2026-04-06')
       expect(summary.movementSessionsCount).toBe(3)
       expect(summary.movementTotalMinutes).toBe(90)
-      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [0, 0], yoga: [1, 30], jingang: [1, 40] })
+      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [0, 0], yoga: [1, 30], jingang: [1, 40], pilates: [0, 0] })
     })
 
     it('counts only days so far in the current week', () => {
@@ -680,7 +683,7 @@ describe('History period navigation and aggregation', () => {
       expect(summary.foundationDaysById).toEqual({ lowerAbs: 2, lowerBack: 2, pelvicFloor: 2, spineMobility: 2 })
       expect(summary.movementSessionsCount).toBe(5)
       expect(summary.movementTotalMinutes).toBe(185)
-      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [2, 95], yoga: [1, 30], jingang: [1, 40] })
+      expect(byType(summary)).toEqual({ swimming: [1, 20], zumba: [2, 95], yoga: [1, 30], jingang: [1, 40], pilates: [0, 0] })
     })
 
     it('aggregates a previous month over all its days', () => {
@@ -716,12 +719,12 @@ describe('History period navigation and aggregation', () => {
 })
 
 describe('Zumba label', () => {
-  it('shows existing zumba records as Zumba without changing the stored id', () => {
-    expect(movementTypeLabel('zumba')).toBe('Zumba')
+  it('shows existing zumba records as 尊巴舞 without changing the stored id', () => {
+    expect(movementTypeLabel('zumba')).toBe('尊巴舞')
 
     const state = addMovementSessionState(stateAt(at(10)), { typeId: 'zumba', durationMinutes: 45 }, at(10))
 
     expect(state.today.movementSessions[0].typeId).toBe('zumba')
-    expect(buildTodayTimeline(state, [], []).find((event) => event.kind === 'movement')!.title).toBe('Zumba')
+    expect(buildTodayTimeline(state, [], []).find((event) => event.kind === 'movement')!.title).toBe('尊巴舞')
   })
 })

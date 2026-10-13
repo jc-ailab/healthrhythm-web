@@ -4,17 +4,16 @@
 // a backup was made lives in a separate, best-effort index: losing or corrupting the index
 // never touches backup contents, it only makes those backups show as "time unknown".
 
-export const BACKUP_KEY_PREFIX = 'health-rhythm-web-backup-'
-// Deliberately outside BACKUP_KEY_PREFIX so it is never listed as a backup itself.
-const BACKUP_INDEX_KEY = 'health-rhythm-web-meta-backups'
+import { BACKUP_KEY_PREFIX, BACKUP_INDEX_KEY } from './storageKeys'
+export { BACKUP_KEY_PREFIX } from './storageKeys'
 
 /**
  * - unreadable: saved data that could not be loaded (possibly the only copy of it)
  * - before-import / before-restore: the live state, saved just before it was replaced
  */
-export type BackupReason = 'unreadable' | 'before-import' | 'before-restore'
+export type BackupReason = 'unreadable' | 'before-import' | 'before-restore' | 'before-migration'
 
-const BACKUP_REASONS: readonly BackupReason[] = ['unreadable', 'before-import', 'before-restore']
+const BACKUP_REASONS: readonly BackupReason[] = ['unreadable', 'before-import', 'before-restore', 'before-migration']
 /** Only these are ever pruned automatically. */
 const SAFETY_COPY_REASONS: ReadonlySet<BackupReason> = new Set(['before-import', 'before-restore'])
 
